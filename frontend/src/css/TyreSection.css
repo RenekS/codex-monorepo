@@ -1,0 +1,127 @@
+/* Základní styly pro sekci pneumatik */
+.tyre-section {
+  display: flex;
+  flex-direction: column;
+  gap: 50px;
+  background-color: #fff;
+  border: 1px solid #ddd;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+  border-radius: 8px;
+  padding: 20px;
+  margin: 20px auto;
+  margin-top: 0;
+  margin-bottom: 20px;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Styly pro kontejnery náprav */
+.axle-container {
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 15px;
+  gap: 0px;
+}
+
+/* Styly pro přední a zadní sekce */
+.front-axles, .rear-axles {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Styly pro obrazky náprav */
+.axle-image {
+  display: block;
+  margin: 10px auto;
+  max-width: 150px;
+  height: auto;
+}
+
+/* Styly pro sekce pneumatik */
+.tyres {
+  display: flex;
+  justify-content: center;
+  gap: 0px;
+}
+
+.tyres-left, .tyres-right {
+  flex: 1;
+}
+
+/* Specifické styly pro tlačítka pneumatik */
+.tyre-button-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 35px;
+  height: 100px;
+  overflow: visible; /* Zajistíme, že elementy přesahující kontejner budou viditelné */
+  margin: 0 2px;
+  padding: 0;
+  box-sizing: border-box;
+  position: relative;
+}
+
+.tyre-button {
+  background-color: transparent;
+  border: none;
+  padding: 0;
+  width: 33px;
+  height: 100px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  cursor: pointer;
+  overflow: hidden;
+  margin: 0px;
+}
+
+.tyre-button img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.tyre-button:hover {
+  background-color: rgba(0, 0, 0, 0.1);
+}
+
+.tyre-button.active {
+  border: 2px solid green;
+  box-shadow: 0 0 10px rgba(0, 255, 0, 0.8);
+}
+
+/* Styly pro popisky pneumatik */
+.tyre-info {
+  position: absolute;
+  width: auto; /* Zajistí, že obsah nebude ořezán */
+  height: auto; /* Zajistí, že obsah nebude ořezán */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.tyre-label {
+  background-color: rgba(255, 255, 255, 0.8); /* Poloprůhledné pozadí */
+  color: black;
+  padding: 2px 5px;
+  font-size: 12px;
+  border-radius: 4px;
+  white-space: nowrap;
+  z-index: 1000; /* Vysoký z-index pro zajištění viditelnosti */
+}
+
+/* Styly pro kontejner nápravy */
+.front-axles, .rear-axles {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.rear-axles {
+  margin-top: 50px;
+}

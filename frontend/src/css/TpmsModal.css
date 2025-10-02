@@ -1,0 +1,56 @@
+.tpms-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.tpms-modal {
+  background-color: white;
+  padding: 20px;
+  border-radius: 5px;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.25);
+  width: 50%;
+  max-width: 600px;
+  max-height: 80%;
+  overflow-y: auto;
+  border: 1px solid #ccc; /* Ohraničení */
+  margin: 0 auto; /* Centrování v rámci flexbox */
+}
+
+.tpms-modal-header {
+  margin-bottom: 10px;
+}
+
+.tpms-modal-title {
+  margin: 0;
+}
+
+.tpms-modal-body {
+  margin-bottom: 20px;
+}
+
+.tpms-modal-footer {
+  text-align: right;
+}
+.tpms-modal-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.tpms-modal-table th,
+.tpms-modal-table td {
+  border: 1px solid #ddd;
+  padding: 8px;
+  text-align: left;
+}
+
+.tpms-modal-table th {
+  background-color: #f2f2f2;
+}

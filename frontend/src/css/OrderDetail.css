@@ -1,0 +1,151 @@
+.order-detail-container {
+  padding: 20px;
+  font-family: Arial, sans-serif;
+}
+
+.order-detail-header {
+  border-bottom: 2px solid #ddd;
+  padding-bottom: 10px;
+  margin-bottom: 20px;
+}
+
+.order-detail-title {
+  font-size: 24px;
+  font-weight: bold;
+  margin-bottom: 10px;
+}
+
+.order-detail-info {
+  margin-bottom: 5px;
+}
+
+.order-detail-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.order-detail-table-header {
+  background: #f5f5f5;
+  text-align: left;
+}
+
+.order-detail-table-cell {
+  border: 1px solid #ddd;
+  padding: 8px;
+}
+
+.order-detail-button {
+  margin-top: 20px;
+  padding: 10px 15px;
+  border: none;
+  background: #007bff;
+  color: white;
+  cursor: pointer;
+}
+
+
+.order-detail-table-cell button {
+  margin: 0 5px;
+  padding: 5px;
+  background-color: #eee;
+  border: 1px solid #ccc;
+  cursor: pointer;
+}
+
+.order-detail-table-cell span {
+  font-weight: bold;
+}
+
+
+
+.number-pad {
+  position: fixed;
+  bottom: 10px;
+  left: 10px;
+  background: white;
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 5px;
+}
+
+.number-pad input {
+  width: 100px;
+}
+
+.number-pad button {
+  margin: 5px;
+}
+
+.number-pad {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: white;
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  z-index: 1000;
+}
+
+.number-pad input {
+  width: 100%;
+  margin-bottom: 10px;
+  padding: 5px;
+  font-size: 16px;
+  text-align: center;
+}
+
+.number-pad-buttons {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-gap: 5px;
+}
+
+.number-pad button {
+  padding: 10px;
+  font-size: 16px;
+  background-color: #f0f0f0;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.number-pad button:hover {
+  background-color: #e6e6e6;
+}
+
+.number-pad .number-pad-submit,
+.number-pad .number-pad-cancel {
+  grid-column: span 3;
+  margin-top: 10px;
+}
+
+.package-count-cell {
+  display: flex;
+  align-items: center;
+}
+
+.package-count {
+  margin: 0 10px; /* Přidává mezery okolo číselné hodnoty */
+}
+
+.open-pad-button {
+  margin-left: 10px; /* Přidává mezery okolo tlačítka číselníku */
+}
+.package-count-cell .over-count {
+  color: red; /* Červené zvýraznění pro překročení počtu */
+}
+
+.package-count-cell .normal-count {
+  color: green; /* Zelené zvýraznění pro normální počet */
+}
+.exact {
+  color: green;
+}
+
+.excess {
+  color: red;
+}
+
+

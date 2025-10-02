@@ -1,0 +1,1312 @@
+// src/components/CatalogImport.js
+
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  Box, Button, Table, TableBody, TableCell, TableContainer, TableHead,
+  TableRow, Paper, Typography, Modal, Select, MenuItem, FormControl,
+  InputLabel, Grid, TextField, IconButton, Checkbox, CircularProgress,
+  Snackbar, Alert, FormControlLabel, Switch
+} from '@mui/material';
+import { ExpandLess, ExpandMore } from '@mui/icons-material';
+import * as XLSX from 'xlsx';
+import axios from 'axios';
+import ExportImportModal from './ExportImportModal';
+import RaynetPriceListModal from './RaynetPriceListModal'; // Import nového modalu
+import { useAuth } from '../AuthContext';
+
+const CatalogImport = () => {
+  // Stavové proměnné
+  const [data, setData] = useState([]);
+  const [openModal, setOpenModal] = useState(false);
+  const [selectedSheet, setSelectedSheet] = useState('');
+  const [poziceData, setPoziceData] = useState([]);
+  const [zpusobUzitiData, setZpusobUzitiData] = useState([]);
+  const [msData, setMsData] = useState([]);
+  const [tpmsfData, setTpmsfData] = useState([]);
+  const [productLineData, setProductLineData] = useState([]);
+  const [categoryData, setCategoryData] = useState([]);
+  const [selectedView, setSelectedView] = useState('Kompletní pohled');
+  const [selectedPriceGroup, setSelectedPriceGroup] = useState('');
+  const [discount, setDiscount] = useState(null);
+  const [minimized, setMinimized] = useState(false);
+  const [selectedFilter, setSelectedFilter] = useState(null);
+  const [validFrom, setValidFrom] = useState('');
+  const [validTo, setValidTo] = useState('');
+  const [isActive, setIsActive] = useState(false);
+  const [filterIds, setFilterIds] = useState({});
+  const [supplier, setSupplier] = useState('');
+  const [category, setCategory] = useState('');
+  const [version, setVersion] = useState('');
+  const [type, setType] = useState('');
+  const [manufacturer, setManufacturer] = useState('');
+  const [snackbarOpen, setSnackbarOpen] = useState(false);
+  const [snackbarMessage, setSnackbarMessage] = useState('');
+  const [snackbarSeverity, setSnackbarSeverity] = useState('success');
+  const { currentUser } = useAuth();
+
+  const [openExportModal, setOpenExportModal] = useState(false); // Stav pro otevření modalu
+
+  const priceGroups = [
+    '', '1_eshop', '2_pult', '3_servis', '4_vo', '5_vip', '6_indiv',
+    '7_dopravci'
+  ];
+
+  const views = {
+    'Kompletní pohled': [
+      'Checkbox', 'C_Polozky', 'Cena', 'CenaPoSleve', 'AkcniCena', 'Nazev',
+      'Rozmer', 'Naprava', 'Provoz', 'M_S', 'TPM_S', 'MarketingovaAkce',
+      'PlatnostOd', 'PlatnostDo', 'Vyrobce', 'CenovaSkupina', 'ZakaznickaSkupina',
+      'Nakladova_cena' // Nový sloupec
+    ],
+    'Ceník 1': ['Checkbox', 'Nazev', 'Cena'],
+    'Ceník 2': [
+      'Checkbox', 'C_Polozky', 'Nazev', 'Cena', 'CenaPoSleve', 'Provoz',
+      'Naprava'
+    ],
+    'Kalkulace - nákladová cena': [
+      'C_Polozky',
+      'Nazev',
+      'Cena',
+      'Prodej_cena',
+      'Nakladova_cena'
+    ]
+  };
+
+  const [selectAll, setSelectAll] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+
+  // Vytvoření mapy synonym pomocí useMemo
+  const synonymMap = useMemo(() => {
+    const map = new Map();
+    poziceData.forEach((pos) => {
+      pos.synonyms.split(',').forEach((syn) => {
+        const cleanedSyn = syn
+          .replace(/[\u200B-\u200D\uFEFF]/g, '') // Odstraní neviditelné znaky
+          .replace(/\s+/g, ' ') // Nahrazení více mezer jednou mezerou
+          .trim()
+          .toLowerCase();
+        map.set(cleanedSyn, pos.value);
+        console.log(`[synonymMap] '${cleanedSyn}' => '${pos.value}'`); // Logování každého synonymního klíče
+      });
+    });
+    console.log('Synonym Map:', Array.from(map.entries())); // Kompletní obsah mapy
+    return map;
+  }, [poziceData]);
+
+  // Funkce pro mapování hodnoty Náprava na standardní hodnotu
+  const mapNapravaValue = (inputValue) => {
+    if (!inputValue) return '';
+    const trimmed = inputValue.trim();
+    const lower = trimmed.toLowerCase();
+    console.log(`[mapNapravaValue] raw='${inputValue}', trimmed='${trimmed}', lower='${lower}'`);
+
+    if (synonymMap.has(lower)) {
+      const mappedValue = synonymMap.get(lower);
+      console.log(`Mapping '${inputValue}' to '${mappedValue}'`);
+      return mappedValue;
+    } else {
+      console.warn(`Náprava '${inputValue}' není v synonymMap. (Klíč: '${lower}')`);
+      return inputValue;
+    }
+  };
+
+  // Funkce pro kontrolu viditelnosti sloupce
+  const isColumnVisible = (column) => {
+    if (!selectedView || !views[selectedView]) {
+      console.error(`Selected view '${selectedView}' does not exist in views.`);
+      return false;
+    }
+    return views[selectedView].includes(column);
+  };
+
+  // Funkce pro zavření snackbaru
+  const handleSnackbarClose = () => {
+    setSnackbarOpen(false);
+  };
+
+  // Funkce pro otevření Export modalu s validací
+  const handleOpenExportModal = async () => {
+    if (!validFrom) {
+      setSnackbarMessage('Pole "Platnost od" musí být vyplněno před exportem.');
+      setSnackbarSeverity('error');
+      setSnackbarOpen(true);
+      return; // Neotevřeme modal
+    }
+
+    // Ujistíme se, že data jsou uložena v SQL ještě před otevřením modalu
+    await handleSave();
+
+    setOpenExportModal(true);
+  };
+
+  // Funkce pro získání šablon PLOR
+  const fetchPLORTemplates = async () => {
+    try {
+      const response = await fetch(
+        `${process.env.REACT_APP_API_URL}/search-versions?componentType=PLOR`
+      );
+      if (!response.ok) {
+        throw new Error('Network response was not ok');
+      }
+      const data = await response.json();
+      return data; // Vrací pole šablon
+    } catch (error) {
+      console.error("Error fetching PLOR templates: ", error);
+      return []; // V případě chyby vrací prázdné pole
+    }
+  };
+
+  // Funkce pro výběr PLOR šablony
+  const handleSelectPLORTemplate = async (template) => {
+    try {
+      setSelectedFilter(template);
+      const filterId = template.filterId;
+
+      const response = await axios.get(
+        `${process.env.REACT_APP_API_URL}/get-catalog-data`,
+        { params: { versionName: template.filterName } }
+      );
+
+      if (response.data) {
+        const fetchedData = response.data.data;
+
+        // Extrakce 'Skupina produktu' z filterValues
+        const filterValues = template.filterValues;
+        const match = filterValues.match(/Skupina produktu:\s*(\S+)/);
+        const skupinaProduktu = match ? match[1] : '';
+
+        setSelectedSheet(skupinaProduktu);
+
+        // Načtení výrobce, kategorie a druhu pomocí skupiny produktů
+        try {
+          const detailsResponse = await axios.get(
+            `${process.env.REACT_APP_API_URL}/get-details-from-sheet`,
+            { params: { sheetName: skupinaProduktu } }
+          );
+
+          const detailsData = detailsResponse.data;
+          setManufacturer(detailsData.manufacturer);
+          setCategory(detailsData.category);
+          setType(detailsData.type);
+        } catch (error) {
+          console.error('Error fetching catalog details: ', error);
+        }
+
+        // Mapování dat
+        const updatedData = fetchedData.map(row => ({
+          ...row,
+          SelectedNaprava: row.SelectedNaprava || '',
+          SelectedProvoz: row.SelectedProvoz || '',
+          SelectedM_S: row.SelectedM_S || '',
+          SelectedTPM_S: row.SelectedTPM_S || '',
+          Nakladova_cena: row.Nakladova_cena || '' // Přidáno
+        }));
+
+        setData(updatedData);
+        setVersion(template.filterName);
+
+        setOpenModal(false); // Zavření modalu
+      } else {
+        alert("Žádná data nebyla nalezena pro vybraný ceník.");
+      }
+    } catch (error) {
+      console.error("Chyba při načítání produktů:", error);
+      alert("Chyba při načítání produktů.");
+    }
+  };
+
+  // Načtení validačních dat při načtení komponenty
+  useEffect(() => {
+    const fetchValidationData = async () => {
+      try {
+        const [
+          poziceResponse,
+          zpusobUzitiResponse,
+          msResponse,
+          tpmsfResponse,
+          categoryResponse,
+          productLineResponse
+        ] = await Promise.all([
+          axios.get(`${process.env.REACT_APP_API_URL}/pozice`),
+          axios.get(`${process.env.REACT_APP_API_URL}/zpusob_uziti`),
+          axios.get(`${process.env.REACT_APP_API_URL}/ms`),
+          axios.get(`${process.env.REACT_APP_API_URL}/tpmsf`),
+          axios.get(`${process.env.REACT_APP_API_URL}/raynet/product-categories`),
+          axios.get(`${process.env.REACT_APP_API_URL}/raynet/product-lines`)
+        ]);
+
+        console.log('Fetched Pozice Data:', poziceResponse.data); // Pro kontrolu
+        setPoziceData(poziceResponse.data);
+        setZpusobUzitiData(zpusobUzitiResponse.data);
+        setMsData(msResponse.data);
+        setTpmsfData(tpmsfResponse.data);
+        setCategoryData(categoryResponse.data.data);
+        setProductLineData(productLineResponse.data.data);
+
+      } catch (error) {
+        console.error('Chyba při načítání validačních dat', error);
+      }
+    };
+
+    fetchValidationData();
+  }, []);
+
+  // Načtení slevy při změně cenové skupiny nebo listu
+  useEffect(() => {
+    if (selectedPriceGroup && selectedSheet) {
+      fetchDiscount();
+    } else {
+      // Pokud není vybrána žádná cenová skupina, resetujeme discount
+      setDiscount(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPriceGroup, selectedSheet]);
+
+  // Rekalkulace cen při změně slevy
+  useEffect(() => {
+    if (discount !== null && data.length > 0) {
+      recalculatePrices();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [discount]);
+
+  // Nový useEffect pro aplikaci marketingových akcí po aktualizaci discount
+  useEffect(() => {
+    if (discount !== null && data.length > 0) {
+      applyMarketingActions(data);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [discount]);
+
+  // Funkce pro získání slevy
+  const fetchDiscount = async () => {
+    try {
+      const response = await axios.get(`${process.env.REACT_APP_API_URL}/get-discount`, {
+        params: { sheetName: selectedSheet, customerGroup: selectedPriceGroup }
+      });
+      setDiscount(parseFloat(response.data.sleva));
+      console.log(`Získaná sleva: ${response.data.sleva}%`);
+    } catch (error) {
+      console.error('Chyba při získávání slevy:', error);
+    }
+  };
+
+  // Funkce pro rekalkulaci cen
+  const recalculatePrices = () => {
+    const updatedData = data.map(row => {
+      const cena = parseFloat(row.Cena) || 0;
+      const cenaPoSleve = discount ? Math.round(cena * (1 - discount / 100)) : cena;
+      return {
+        ...row,
+        CenaPoSleve: String(cenaPoSleve)
+      };
+    });
+    setData(updatedData);
+    console.log('Rekalkulovaná data:', updatedData);
+  };
+
+  // Funkce pro aplikaci marketingových akcí
+  const applyMarketingActions = async (rows) => {
+    try {
+      const response = await axios.post(
+        `${process.env.REACT_APP_API_URL}/applyMarketingActions`,
+        {
+          data: rows,
+          selectedPriceGroup: selectedPriceGroup || null,
+        }
+      );
+      const updatedData = response.data.data;
+
+      // Rekalkulace cen pokud je sleva nastavena
+      const recalculatedData = updatedData.map(row => {
+        const cena = parseFloat(row.Cena) || 0;
+        const cenaPoSleve = discount ? Math.round(cena * (1 - discount / 100)) : cena;
+        return {
+          ...row,
+          CenaPoSleve: String(cenaPoSleve)
+        };
+      });
+
+      setData(recalculatedData);
+      console.log('Data po aplikaci marketingových akcí:', recalculatedData);
+    } catch (error) {
+      console.error('Chyba při aplikaci marketingových akcí:', error);
+    }
+  };
+
+  // Funkce pro nahrání souboru
+  const handleFileUpload = async (
+    file, selectedSheet, selectedPriceGroup, productLineId,
+    categoryId, typeValue, categoryValue
+  ) => {
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const arrayBuffer = event.target.result;
+      const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' });
+
+      const sheetData = XLSX.utils.sheet_to_json(
+        workbook.Sheets[selectedSheet], { header: 1 }
+      );
+      const headers = sheetData[0].map(header => header.replace(/[\r\n]+/g, '').trim());
+
+      console.log("Headers:", headers); // Pro debugování
+
+      // Funkce pro bezpečný přístup k poli row podle názvu sloupce
+      const getValue = (row, columnName) => {
+        const idx = headers.indexOf(columnName);
+        if (idx === -1) {
+          console.warn(`Sloupec '${columnName}' nebyl nalezen v XLSX.`);
+          return ''; // Nebo null, nebo vyvolat chybu
+        }
+        return row[idx] !== undefined ? row[idx] : '';
+      };
+
+      const rows = sheetData.slice(1).map(row => {
+        const cena = (() => {
+          const cenaIndex = headers.indexOf('Cena');
+          if (cenaIndex === -1) {
+            console.warn("Sloupec 'Cena' nebyl nalezen v XLSX, nastavuji 0.");
+            return 0;
+          }
+          return row[cenaIndex] !== undefined ? parseFloat(row[cenaIndex]) : 0;
+        })();
+
+        const cenaPoSleve = discount ? Math.round(cena * (1 - discount / 100)) : cena;
+
+        const kategorie = getValue(row, 'Kategorie') || categoryValue;
+        const productLineVal = getValue(row, 'Produktová linie') || typeValue;
+
+        const categoryItem = categoryData.find(
+          item => item.code01 === kategorie
+        );
+        const productLineItem = productLineData.find(
+          item => item.code01 === productLineVal
+        );
+
+        // Mapování hodnoty Náprava pomocí synonym
+        const originalNaprava = getValue(row, 'Náprava') || '';
+        const mappedNaprava = mapNapravaValue(originalNaprava);
+
+        if (mappedNaprava === originalNaprava && originalNaprava !== '') {
+          console.warn(`Náprava '${originalNaprava}' nebyla nalezena v synonym mapě.`);
+          // Můžete přidat další logiku, např. označení řádku jako chybný
+        }
+
+        const produkt = {
+          IsChecked: false,
+          IsNewItem: false,
+          C_Polozky: getValue(row, 'Č. položky'),
+          Cena: cena !== 0 ? String(cena) : '',
+          Prodej_cena: cena !== 0 ? String(cena) : '',
+          CenaPoSleve: String(cenaPoSleve),
+          Nazev: getValue(row, 'Název'),
+          Rozmer: getValue(row, 'Rozměr'),
+          Naprava: originalNaprava,
+          OriginalNaprava: originalNaprava,
+          SelectedNaprava: mappedNaprava,
+          Provoz: getValue(row, 'Provoz') || '',
+          OriginalProvoz: getValue(row, 'Provoz') || '',
+          SelectedProvoz: getValue(row, 'Provoz') || '',
+          M_S: getValue(row, 'M+S') || '',
+          OriginalM_S: getValue(row, 'M+S') || '',
+          SelectedM_S: getValue(row, 'M+S') || '',
+          TPM_S: getValue(row, '3PMSF') || '',
+          OriginalTPM_S: getValue(row, '3PMSF') || '',
+          SelectedTPM_S: getValue(row, '3PMSF') || '',
+          MarketingovaAkce: '',
+          PlatnostOd: '',
+          PlatnostDo: '',
+          Vyrobce: manufacturer || '',
+          CenovaSkupina: selectedPriceGroup || '',
+          ZakaznickaSkupina: selectedPriceGroup || '',
+          category: categoryItem ? {
+            id: categoryItem.id, code01: categoryItem.code01
+          } : {
+            id: categoryId, code01: categoryValue || 'Pneu'
+          },
+          productLine: productLineItem ? {
+            id: productLineItem.id, code01: productLineItem.code01
+          } : {
+            id: productLineId, code01: typeValue || 'Nákladní'
+          },
+          RNpricelistId: null, // Inicializace RNpricelistId jako null
+          Nakladova_cena: row.Nakladova_cena || '', // Přidání Nakladova_cena
+        };
+
+        return produkt;
+      });
+
+      // Odstranění řádků, kde 'Č. položky' je prázdné nebo null
+      const filteredRows = rows.filter(row => row.C_Polozky !== null && row.C_Polozky !== '');
+
+      console.log('Filtered Rows:', filteredRows); // Přidejte tento řádek pro kontrolu
+
+      // Použití filtrovaných dat
+      await applyMarketingActions(filteredRows);
+      setData(filteredRows); // Nastavení filtrovaných dat
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  // Funkce pro odeslání dat z Import modalu
+  const handleModalSubmit = (formData) => {
+    const versionValue = formData.get('versionName');
+    const selectedSheetValue = formData.get('selectedSheet');
+    const selectedPriceGroupFromForm = formData.get('selectedPriceGroup');
+
+    // Další hodnoty
+    const supplierValue = formData.get('supplier');
+    const categoryValue = formData.get('category');
+    const typeValue = formData.get('type');
+    const manufacturerValue = formData.get('manufacturer');
+
+    setSupplier(supplierValue);
+    setCategory(categoryValue);
+    setType(typeValue);
+    setManufacturer(manufacturerValue);
+
+    if (selectedPriceGroupFromForm !== null && selectedPriceGroupFromForm !== undefined) {
+      setSelectedPriceGroup(selectedPriceGroupFromForm);
+    }
+
+    // Nalezení ID pro kategorii a produktovou linii
+    const productLineItem = productLineData.find(item => item.code01 === typeValue);
+    const categoryItem = categoryData.find(item => item.code01 === categoryValue);
+    const productLineId = productLineItem ? productLineItem.id : null;
+    const categoryId = categoryItem ? categoryItem.id : null;
+
+    setData([]);
+    setDiscount(null);
+    setMinimized(false);
+    setSelectedSheet(selectedSheetValue);
+
+    // Zde doplníme prefix 'CENIK_', pokud chybí
+    let finalVersionValue = versionValue || '';
+    if (!finalVersionValue.startsWith('CENIK_')) {
+      finalVersionValue = `CENIK_${finalVersionValue}`;
+    }
+    setVersion(finalVersionValue); // nyní bude ve version vždy prefix 'CENIK_'
+
+    if (formData.has('file')) {
+      const file = formData.get('file');
+      handleFileUpload(
+        file,
+        selectedSheetValue,
+        selectedPriceGroupFromForm,
+        productLineId,
+        categoryId,
+        typeValue,
+        categoryValue
+      );
+    } else {
+      // Data byla načtena z uloženého katalogu...
+      // Nic dalšího není třeba dělat, data se již načetla v handleSelectPLORTemplate
+    }
+
+    setOpenModal(false);
+  };
+
+  // Funkce pro generování nové verze
+  const generateNewVersion = async (baseVersion, sheetName) => {
+    // baseVersion je například 'CENIK_20241212_SA01040_V1'
+    const match = baseVersion.match(/^CENIK_(\d{8})_(.+)_V(\d+)$/);
+    if (!match) {
+      // Pokud baseVersion není ve správném formátu, vygenerujeme novou verzi s V1
+      const currentDate = new Date();
+      const year = currentDate.getFullYear();
+      const month = String(currentDate.getMonth() + 1).padStart(2, '0');
+      const day = String(currentDate.getDate()).padStart(2, '0');
+      const dateString = `${year}${month}${day}`;
+      return `CENIK_${dateString}_${sheetName}_V1`;
+    }
+
+    const datePart = match[1];
+    const sheetPart = match[2];
+
+    try {
+      const response = await axios.post(
+        `${process.env.REACT_APP_API_URL}/get-existing-versions`,
+        {
+          date: datePart,
+          sheetName: sheetPart,
+        }
+      );
+
+      // Extrahujeme všechna čísla verzí
+      const versionNumbers = new Set();
+      response.data.versions.forEach((versionObj) => {
+        // Použijeme regex, který extrahuje číslo verze před jakoukoli další příponou
+        const vMatch = versionObj.filterName.match(/_V(\d+)(?:_|$)/);
+        if (vMatch) {
+          const versionNumber = parseInt(vMatch[1], 10);
+          versionNumbers.add(versionNumber);
+        }
+      });
+
+      // Najdeme maximální číslo verze
+      let maxVersionNumber = 0;
+      versionNumbers.forEach((vn) => {
+        if (vn > maxVersionNumber) {
+          maxVersionNumber = vn;
+        }
+      });
+
+      const newVersionNumber = maxVersionNumber + 1;
+      return `CENIK_${datePart}_${sheetPart}_V${newVersionNumber}`;
+    } catch (error) {
+      console.error('Error generating new version:', error);
+      // Pokud dojde k chybě, vytvoříme fallback verzi V1
+      const currentDate = new Date();
+      const year = currentDate.getFullYear();
+      const month = String(currentDate.getMonth() + 1).padStart(2, '0');
+      const day = String(currentDate.getDate()).padStart(2, '0');
+      const dateString = `${year}${month}${day}`;
+      return `CENIK_${dateString}_${sheetName}_V1`;
+    }
+  };
+
+  // Funkce pro uložení dat pro konkrétní cenovou skupinu
+  const saveDataForPriceGroup = async (versionToSave, validFrom, validTo, isActive, priceGroup, filterName) => {
+    try {
+      // Uložíme i nekompletní řádky, které mají Č. položky a Cena
+      const validData = data.filter(row => row.C_Polozky && row.Cena);
+
+      if (validData.length === 0) {
+        console.warn(`Žádné platné záznamy pro cenovou skupinu ${priceGroup}!`);
+        return;
+      }
+
+      console.log(`Ukládám do cenové skupiny: ${priceGroup}`);
+      console.log(`Validní data pro ${priceGroup}:`, validData);
+
+      const response = await axios.post(`${process.env.REACT_APP_API_URL}/save-catalog-data`, {
+        data: validData,
+        userId: currentUser.userID,
+        versionName: filterName,
+        filterName: filterName,
+        selectedView: selectedView,
+        selectedPriceGroup: priceGroup,
+        sheetName: selectedSheet,
+        validFrom: validFrom || null,
+        validTo: validTo || null,
+        isActive: isActive ? 1 : 0,
+        manufacturer: manufacturer
+      });
+
+      const { filterId } = response.data;
+      setFilterIds(prev => ({ ...prev, [priceGroup]: filterId }));
+
+      console.log(`Data pro cenovou skupinu ${priceGroup} byla úspěšně uložena pod verzi: ${filterName}`);
+    } catch (error) {
+      console.error(`Chyba při ukládání dat pro cenovou skupinu ${priceGroup}`, error);
+      alert(`Chyba při ukládání dat pro cenovou skupinu ${priceGroup}.`);
+    }
+  };
+
+  // Funkce pro uložení všech cenových skupin
+  const saveAllPriceGroupsData = async (versionToSave, validFrom, validTo, isActive) => {
+    for (const priceGroup of priceGroups) {
+      if (priceGroup === '') continue;
+
+      const filterName = `${versionToSave}_${priceGroup}`;
+      await saveDataForPriceGroup(versionToSave, validFrom, validTo, isActive, priceGroup, filterName);
+    }
+  };
+
+  // Funkce pro automatické doplnění hodnot
+  const handleAutoFillAll = async () => {
+    const itemIds = data.map(row => row.C_Polozky);
+    const response = await fetchCorrectValues(itemIds);
+    const { values: updatedValues } = response;
+
+    const newData = data.map(row => {
+      const polozkaData = updatedValues[row.C_Polozky];
+      if (polozkaData) {
+        return {
+          ...row,
+          SelectedNaprava: polozkaData.ItsTyrePosition || row.SelectedNaprava,
+          SelectedProvoz: polozkaData.ItsTyreUseMode || row.SelectedProvoz,
+          SelectedM_S: polozkaData.ItsMSMark || row.SelectedM_S,
+          SelectedTPM_S: polozkaData.ItsSnowflakeInMountain || row.SelectedTPM_S,
+          Naprava: polozkaData.ItsTyrePosition || row.Naprava,
+          Provoz: polozkaData.ItsTyreUseMode || row.Provoz,
+          M_S: polozkaData.ItsMSMark || row.M_S,
+          TPM_S: polozkaData.ItsSnowflakeInMountain || row.TPM_S,
+          Nazev: polozkaData.ItemName || row.Nazev,
+          IsNewItem: false,
+          Nakladova_cena: polozkaData.Skladova_cena || row.Nakladova_cena, // Přidání Nakladova_cena
+        };
+      } else {
+        return {
+          ...row,
+          IsNewItem: true, // Záznam nenalezen, označen jako nový
+          Nakladova_cena: '', // Vynechání nebo nastavení prázdné hodnoty
+        };
+      }
+    });
+
+    setData(newData);
+    console.log('Data po automatickém doplnění:', newData);
+  };
+
+  // Funkce pro načtení správných hodnot
+  const fetchCorrectValues = async (itemIds) => {
+    try {
+      const response = await axios.post(
+        `${process.env.REACT_APP_API_URL}/raynet/get-correct-values`,
+        { itemIds }
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Chyba při načítání správných hodnot:', error);
+      return { values: {}, notFoundItems: [] };
+    }
+  };
+
+  // Funkce pro výběr všech položek
+  const handleSelectAllClick = (event) => {
+    const isChecked = event.target.checked;
+    setSelectAll(isChecked);
+    const newData = data.map(row => ({
+      ...row,
+      IsChecked: isChecked,
+    }));
+    setData(newData);
+  };
+
+  // Funkce pro uložení dat (handleSave)
+  const handleSave = async () => {
+    try {
+      let currentVersion = version;
+
+      // Ujistíme se, že version začíná s "CENIK_"
+      if (!currentVersion.startsWith("CENIK_")) {
+        currentVersion = `CENIK_${currentVersion}`;
+      }
+
+      // Rozebere currentVersion na datum a sheetPart
+      const baseMatch = currentVersion.match(/^CENIK_(\d{8})_(.+)_V(\d+)$/);
+      let datePart, sheetPart;
+      if (baseMatch) {
+        datePart = baseMatch[1];
+        sheetPart = baseMatch[2];
+      } else {
+        // Pokud version není ve formátu "CENIK_YYYYMMDD_SHEET_V#", vytvoří se nová verze
+        const currentDate = new Date();
+        const year = currentDate.getFullYear();
+        const month = String(currentDate.getMonth() + 1).padStart(2, '0');
+        const day = String(currentDate.getDate()).padStart(2, '0');
+        datePart = `${year}${month}${day}`;
+        sheetPart = selectedSheet; // např. "SA01040"
+        currentVersion = `CENIK_${datePart}_${sheetPart}_V1`;
+        setVersion(currentVersion);
+      }
+
+      // Získáme existující verze z API
+      const response = await axios.post(`${process.env.REACT_APP_API_URL}/get-existing-versions`, {
+        date: datePart,
+        sheetName: sheetPart
+      });
+
+      const existingVersions = response.data.versions.map(ver => ver.filterName);
+
+      // Zjistíme, zda už verze existuje
+      const versionExists = existingVersions.some(filterName => filterName.startsWith(currentVersion));
+      if (versionExists) {
+        const confirmed = window.confirm(
+          'Pracujete se starou verzí. Chcete vytvořit novou verzi?'
+        );
+        if (confirmed) {
+          // Vytvoří novou verzi => např. _V2, _V3 atd.
+          const generatedVersion = await generateNewVersion(currentVersion, sheetPart);
+          setVersion(generatedVersion);
+          currentVersion = generatedVersion;
+        } else {
+          // Uživatel zrušil, tady se to ukončí
+          return;
+        }
+      }
+
+      // Zkontrolujeme, jestli jsou nějaké nekompletní řádky
+      const incompleteRows = data.filter(
+        row =>
+          !row.SelectedNaprava ||
+          !row.SelectedProvoz ||
+          !row.SelectedM_S ||
+          !row.SelectedTPM_S
+      );
+      if (incompleteRows.length > 0) {
+        const proceed = window.confirm(
+          'Data nejsou kompletní. Chcete přesto pokračovat v uložení?'
+        );
+        if (!proceed) return; // Uživatel odmítl pokračovat
+      }
+
+      // Uložení dat pro **všechny cenové skupiny**
+      await saveAllPriceGroupsData(currentVersion, validFrom, validTo, isActive);
+      alert('Data byla úspěšně uložena pro všechny cenové skupiny!');
+    } catch (error) {
+      console.error('Error checking version before saving:', error);
+      alert('Chyba při kontrolování verze před uložením.');
+    }
+  };
+
+  return (
+    <Box
+      sx={{
+        paddingLeft: '10px',
+        paddingRight: '10px',
+        position: 'relative',
+        maxWidth: '100%',
+        height: 'calc(100vh - 64px)',
+        overflow: 'hidden',
+      }}
+    >
+      <Typography variant="h4" gutterBottom>
+        Import Ceníků
+      </Typography>
+
+      {/* Hlavní Box s tlačítky a přepínačem */}
+      <Box
+        sx={{
+          padding: '10px',
+          border: '1px solid lightgray',
+          boxSizing: 'border-box',
+          position: 'sticky',
+          top: 0,
+          zIndex: 1000,
+          backgroundColor: 'white',
+        }}
+      >
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          {/* Tlačítka */}
+          <Box>
+            <Button variant="contained" onClick={() => setOpenModal(true)}>
+              Importovat
+            </Button>
+            <Button variant="contained" color="primary" onClick={handleSave} sx={{ marginLeft: '10px' }}>
+              Uložit
+            </Button>
+            <Button variant="contained" onClick={handleAutoFillAll} sx={{ marginLeft: '10px' }}>
+              Automaticky doplnit hodnoty
+            </Button>
+            <Button
+              variant="contained"
+              color="secondary"
+              onClick={handleOpenExportModal} // Upraveno pro validaci
+              sx={{ marginLeft: '10px' }}
+              disabled={isExporting}
+              startIcon={isExporting && <CircularProgress size={20} />}
+            >
+              Exportovat do Raynet
+            </Button>
+            <Button
+              variant="outlined"
+              onClick={() => {
+                console.log('Current Synonym Map:', Array.from(synonymMap.entries()));
+                alert('Zkontrolujte konzoli pro obsah synonymMap.');
+              }}
+              sx={{ marginLeft: '10px' }}
+            >
+              Zobrazit synonymMap
+            </Button>
+          </Box>
+
+          {/* Přepínač Aktivní ceník a ikona pro minimalizaci */}
+          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+            <FormControlLabel
+              control={<Switch checked={isActive} disabled />}
+              label="Aktivní ceník"
+            />
+            <IconButton onClick={() => setMinimized(!minimized)}>
+              {minimized ? <ExpandMore /> : <ExpandLess />}
+            </IconButton>
+          </Box>
+        </Box>
+
+        {/* Tabulka s 4 poli vedle sebe */}
+        {!minimized && (
+          <Grid
+            container
+            spacing={2}
+            sx={{
+              marginLeft: '0px',
+              paddingRight: '5px',
+              paddingLeft: '5px',
+              marginTop: '10px',
+              rowGap: '5px',
+            }}
+          >
+            {/* 6 polí vedle sebe */}
+            <Grid item xs={12} sm={6} md={2.4} sx={{ height: '56px' }}>
+              <TextField
+                label="Dodavatel"
+                value={supplier}
+                fullWidth
+                InputProps={{
+                  readOnly: true,
+                  sx: {
+                    height: '56px', // Nastavení výšky samotného inputu
+                    padding: '0 14px', // Uprav padding, aby výška seděla
+                  },
+                }}
+                sx={{
+                  '& .MuiInputBase-root': {
+                    height: '56px', // Nastavení výšky celé komponenty TextField
+                  },
+                  '& .MuiOutlinedInput-input': {
+                    height: '40px', // Výška samotného pole pro text
+                    padding: '8px 14px', // Uprav padding inputu
+                  },
+                }}
+              />
+            </Grid>
+
+            <Grid item xs={12} sm={6} md={2.4} sx={{ height: '56px' }}>
+              <TextField
+                label="Verze"
+                value={version}
+                fullWidth
+                InputProps={{
+                  readOnly: true,
+                  sx: {
+                    height: '56px',
+                    padding: '0 14px',
+                  },
+                }}
+                sx={{
+                  '& .MuiInputBase-root': {
+                    height: '56px',
+                  },
+                  '& .MuiOutlinedInput-input': {
+                    height: '40px',
+                    padding: '8px 14px',
+                  },
+                }}
+              />
+            </Grid>
+
+            <Grid item xs={12} sm={6} md={2.4}>
+              <TextField
+                label="Výrobce"
+                value={manufacturer}
+                fullWidth
+                InputProps={{
+                  readOnly: true,
+                  sx: {
+                    height: '56px',
+                    padding: '0 14px',
+                  },
+                }}
+                sx={{
+                  '& .MuiInputBase-root': {
+                    height: '56px',
+                  },
+                  '& .MuiOutlinedInput-input': {
+                    height: '40px',
+                    padding: '8px 14px',
+                  },
+                }}
+              />
+            </Grid>
+
+            <Grid item xs={12} sm={6} md={2.4}>
+              <TextField
+                label="Kategorie"
+                value={category}
+                fullWidth
+                InputProps={{
+                  readOnly: true,
+                  sx: {
+                    height: '56px',
+                    padding: '0 14px',
+                  },
+                }}
+                sx={{
+                  '& .MuiInputBase-root': {
+                    height: '56px',
+                  },
+                  '& .MuiOutlinedInput-input': {
+                    height: '40px',
+                    padding: '8px 14px',
+                  },
+                }}
+              />
+            </Grid>
+
+            <Grid item xs={12} sm={6} md={2.4}>
+              <TextField
+                label="Druh"
+                value={type}
+                fullWidth
+                InputProps={{
+                  readOnly: true,
+                  sx: {
+                    height: '56px',
+                    padding: '0 14px',
+                  },
+                }}
+                sx={{
+                  '& .MuiInputBase-root': {
+                    height: '56px',
+                  },
+                  '& .MuiOutlinedInput-input': {
+                    height: '40px',
+                    padding: '8px 14px',
+                  },
+                }}
+              />
+            </Grid>
+
+            <Grid item xs={12} sm={6} md={2.4}>
+              <TextField
+                label="Platnost od"
+                type="date"
+                value={validFrom}
+                onChange={(e) => setValidFrom(e.target.value)}
+                fullWidth
+                InputLabelProps={{ shrink: true }}
+                sx={{
+                  height: '70px',
+                }}
+              />
+            </Grid>
+
+            <Grid item xs={12} sm={6} md={2.4}>
+              <TextField
+                label="Platnost do"
+                type="date"
+                value={validTo}
+                onChange={(e) => setValidTo(e.target.value)}
+                fullWidth
+                InputLabelProps={{ shrink: true }}
+                sx={{
+                  height: '70px',
+                }}
+              />
+            </Grid>
+
+            {discount !== null && (
+              <Grid item xs={12} sm={6} md={2.4}>
+                <TextField
+                  label="Sleva (%)"
+                  value={discount}
+                  fullWidth
+                  InputProps={{
+                    readOnly: true,
+                    sx: {
+                      height: '56px',
+                      padding: '0 14px',
+                    },
+                  }}
+                  sx={{
+                    '& .MuiInputBase-root': {
+                      height: '56px',
+                    },
+                    '& .MuiOutlinedInput-input': {
+                      height: '40px',
+                      padding: '8px 14px',
+                    },
+                  }}
+                />
+              </Grid>
+            )}
+
+            <Grid item xs={12} sm={6} md={2.4}>
+              <FormControl fullWidth variant="outlined" sx={{ height: '70px' }}>
+                <InputLabel>Výběr zobrazení</InputLabel>
+                <Select
+                  value={selectedView}
+                  onChange={(e) => setSelectedView(e.target.value)}
+                  fullWidth
+                  label="Výběr zobrazení"
+                >
+                  {Object.keys(views).map((view) => (
+                    <MenuItem key={view} value={view}>
+                      {view}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Grid>
+
+            <Grid item xs={12} sm={6} md={2.4}>
+              <FormControl fullWidth variant="outlined" sx={{ height: '70px' }}>
+                <InputLabel>Výběr cenové skupiny</InputLabel>
+                <Select
+                  value={selectedPriceGroup || ''}
+                  onChange={(e) => setSelectedPriceGroup(e.target.value)}
+                  fullWidth
+                  label="Výběr cenové skupiny"
+                >
+                  <MenuItem value="">
+                    <em>Žádná cenová skupina</em>
+                  </MenuItem>
+                  {priceGroups.filter(group => group !== '').map((group) => (
+                    <MenuItem key={group} value={group}>
+                      {group}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Grid>
+          </Grid>
+        )}
+      </Box>
+
+      {/* Tabulka s daty */}
+      <Box
+        sx={{
+          height: minimized ? 'calc(100vh - 190px)' : 'calc(100vh - 180px - 190px)',
+          overflowX: 'auto', // Horizontální posouvání
+          overflowY: 'auto', // Vertikální posuvník pro řádky tabulky
+          marginTop: '10px',
+        }}
+      >
+        {data.length > 0 && (
+          <TableContainer component={Paper} sx={{ maxHeight: '100%' }}>
+            <Table
+              stickyHeader
+              style={{ tableLayout: 'auto' }} // Automatické rozložení sloupců
+            >
+              <TableHead sx={{ position: 'sticky', top: 0, zIndex: 1000 }}>
+                <TableRow>
+                  {isColumnVisible('Checkbox') && (
+                    <TableCell padding="checkbox">
+                      <Checkbox
+                        indeterminate={data.some(row => row.IsChecked) && !selectAll}
+                        checked={selectAll}
+                        onChange={handleSelectAllClick}
+                      />
+                    </TableCell>
+                  )}
+                  {isColumnVisible('C_Polozky') && <TableCell>Kód položky</TableCell>}
+                  {isColumnVisible('Cena') && <TableCell>Cena Výrobce</TableCell>}
+                  {isColumnVisible('CenaPoSleve') && (
+                    <TableCell
+                      sx={{
+                        minWidth: '90px', // Nastavte minimální šířku
+                        whiteSpace: 'normal', // Povolit zalomení textu
+                      }}
+                    >
+                      Cena po slevě
+                    </TableCell>
+                  )}
+                  {isColumnVisible('AkcniCena') && <TableCell>Marketingová cena</TableCell>}
+                  {isColumnVisible('Nazev') && <TableCell>Název</TableCell>}
+                  {isColumnVisible('Rozmer') && <TableCell>Rozměr</TableCell>}
+                  {isColumnVisible('Naprava') && <TableCell>Náprava</TableCell>}
+                  {isColumnVisible('Provoz') && <TableCell>Provoz</TableCell>}
+                  {isColumnVisible('M_S') && <TableCell>M+S</TableCell>}
+                  {isColumnVisible('TPM_S') && <TableCell>3PMSF</TableCell>}
+                  {isColumnVisible('MarketingovaAkce') && <TableCell>Marketingová akce</TableCell>}
+                  {isColumnVisible('PlatnostOd') && <TableCell>Platnost od</TableCell>}
+                  {isColumnVisible('PlatnostDo') && <TableCell>Platnost do</TableCell>}
+                  {isColumnVisible('Vyrobce') && <TableCell>Výrobce</TableCell>}
+                  {isColumnVisible('CenovaSkupina') && <TableCell>Cenová skupina</TableCell>}
+                  {isColumnVisible('VybraneZobrazeni') && <TableCell>Vybrané zobrazení</TableCell>}
+                  {isColumnVisible('ZakaznickaSkupina') && <TableCell>Zákaznická skupina</TableCell>}
+                  {isColumnVisible('Nakladova_cena') && <TableCell>Skladová Cena</TableCell>} {/* Nový sloupec */}
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {data.map((row, rowIndex) => (
+                  <TableRow
+                    key={rowIndex}
+                    sx={{
+                      height: '36px', // Snížení výšky řádku
+                    }}
+                    style={{ backgroundColor: row.IsNewItem ? '#ffcccc' : 'inherit' }}
+                  >
+                    {isColumnVisible('Checkbox') && (
+                      <TableCell padding="checkbox" sx={{ padding: '6px' }}>
+                        <Checkbox
+                          checked={row.IsChecked || false}
+                          onChange={(event) => {
+                            const newData = [...data];
+                            newData[rowIndex].IsChecked = event.target.checked;
+                            setData(newData);
+
+                            const allChecked = newData.every(row => row.IsChecked);
+                            setSelectAll(allChecked);
+                          }}
+                        />
+                      </TableCell>
+                    )}
+                    {isColumnVisible('C_Polozky') && <TableCell sx={{ padding: '6px' }}>{row.C_Polozky}</TableCell>}
+                    {isColumnVisible('Cena') && <TableCell sx={{ padding: '6px' }}>{row.Cena}</TableCell>}
+                    {isColumnVisible('CenaPoSleve') && <TableCell sx={{ padding: '6px' }}>{row.CenaPoSleve}</TableCell>}
+                    {isColumnVisible('AkcniCena') && <TableCell sx={{ padding: '6px' }}>{row.AkcniCena}</TableCell>}
+                    {isColumnVisible('Nazev') && (
+                      <TableCell sx={{ whiteSpace: 'nowrap', padding: '6px' }}>{row.Nazev}</TableCell>
+                    )}
+                    {isColumnVisible('Rozmer') && <TableCell sx={{ padding: '6px' }}>{row.Rozmer}</TableCell>}
+                    {isColumnVisible('Naprava') && (
+                      <TableCell sx={{ padding: '6px' }}>
+                        <FormControl fullWidth variant="outlined">
+                          <InputLabel shrink>{row.OriginalNaprava || ''}</InputLabel>
+                          <Select
+                            value={row.SelectedNaprava || ''}
+                            onChange={(e) => {
+                              const updatedData = [...data];
+                              updatedData[rowIndex].SelectedNaprava = e.target.value;
+                              setData(updatedData);
+                            }}
+                            fullWidth
+                            label={row.OriginalNaprava || ''}
+                            notched
+                          >
+                            {poziceData.map((item) => (
+                              <MenuItem key={item.id} value={item.value}>
+                                {item.value}
+                              </MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
+                      </TableCell>
+                    )}
+                    {isColumnVisible('Provoz') && (
+                      <TableCell sx={{ padding: '6px' }}>
+                        <FormControl fullWidth variant="outlined">
+                          <InputLabel shrink>{row.OriginalProvoz || ''}</InputLabel>
+                          <Select
+                            value={row.SelectedProvoz || ''}
+                            onChange={(e) => {
+                              const updatedData = [...data];
+                              updatedData[rowIndex].SelectedProvoz = e.target.value;
+                              setData(updatedData);
+                            }}
+                            fullWidth
+                            label={row.OriginalProvoz || ''}
+                            notched
+                          >
+                            {zpusobUzitiData.map((item) => (
+                              <MenuItem key={item.id} value={item.value}>
+                                {item.value}
+                              </MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
+                      </TableCell>
+                    )}
+                    {isColumnVisible('M_S') && (
+                      <TableCell sx={{ padding: '6px' }}>
+                        <FormControl fullWidth variant="outlined">
+                          <InputLabel shrink>{row.OriginalM_S || ''}</InputLabel>
+                          <Select
+                            value={row.SelectedM_S || ''}
+                            onChange={(e) => {
+                              const updatedData = [...data];
+                              updatedData[rowIndex].SelectedM_S = e.target.value;
+                              setData(updatedData);
+                            }}
+                            fullWidth
+                            label={row.OriginalM_S || ''}
+                            notched
+                          >
+                            {msData.map((item) => (
+                              <MenuItem key={item.id} value={item.value}>
+                                {item.value}
+                              </MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
+                      </TableCell>
+                    )}
+                    {isColumnVisible('TPM_S') && (
+                      <TableCell sx={{ padding: '6px' }}>
+                        <FormControl fullWidth variant="outlined">
+                          <InputLabel shrink>{row.OriginalTPM_S || ''}</InputLabel>
+                          <Select
+                            value={row.SelectedTPM_S || ''}
+                            onChange={(e) => {
+                              const updatedData = [...data];
+                              updatedData[rowIndex].SelectedTPM_S = e.target.value;
+                              setData(updatedData);
+                            }}
+                            fullWidth
+                            label={row.OriginalTPM_S || ''}
+                            notched
+                          >
+                            {tpmsfData.map((item) => (
+                              <MenuItem key={item.id} value={item.value}>
+                                {item.value}
+                              </MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
+                      </TableCell>
+                    )}
+                    {isColumnVisible('MarketingovaAkce') && <TableCell sx={{ padding: '6px' }}>{row.MarketingovaAkce}</TableCell>}
+                    {isColumnVisible('PlatnostOd') && <TableCell sx={{ padding: '6px' }}>{row.PlatnostOd}</TableCell>}
+                    {isColumnVisible('PlatnostDo') && <TableCell sx={{ padding: '6px' }}>{row.PlatnostDo}</TableCell>}
+                    {isColumnVisible('Vyrobce') && <TableCell sx={{ padding: '6px' }}>{row.Vyrobce}</TableCell>}
+                    {isColumnVisible('CenovaSkupina') && <TableCell sx={{ padding: '6px' }}>{row.CenovaSkupina}</TableCell>}
+                    {isColumnVisible('VybraneZobrazeni') && <TableCell sx={{ padding: '6px' }}>{row.VybraneZobrazeni}</TableCell>}
+                    {isColumnVisible('ZakaznickaSkupina') && <TableCell sx={{ padding: '6px' }}>{row.ZakaznickaSkupina}</TableCell>}
+                    {isColumnVisible('Nakladova_cena') && <TableCell sx={{ padding: '6px' }}>{row.Nakladova_cena || '-'}</TableCell>} {/* Nový sloupec */}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        )}
+      </Box>
+
+      {/* Modal pro Import */}
+      <Modal open={openModal} onClose={() => setOpenModal(false)}>
+        <Box
+          sx={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            width: 600,
+            bgcolor: 'background.paper',
+            boxShadow: 24,
+            p: 4,
+          }}
+        >
+          <ExportImportModal
+            handleClose={() => setOpenModal(false)}
+            onSubmit={handleModalSubmit}
+            onSheetSelect={setSelectedSheet}
+            fetchPLORTemplates={fetchPLORTemplates}
+            handleSelectPLORTemplate={handleSelectPLORTemplate}
+          />
+        </Box>
+      </Modal>
+
+      {/* Modal pro Export do Raynet */}
+      <RaynetPriceListModal
+        open={openExportModal}
+        onClose={() => setOpenExportModal(false)}
+        version={version}
+        selectedSheet={selectedSheet}
+        validFrom={validFrom}
+        validTo={validTo}
+        filterId={selectedFilter ? selectedFilter.filterId : null}
+        manufacturer={manufacturer}
+      />
+
+      {/* Snackbar pro export výsledky */}
+      <Snackbar
+        open={snackbarOpen}
+        autoHideDuration={6000}
+        onClose={handleSnackbarClose}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert onClose={handleSnackbarClose} severity={snackbarSeverity} sx={{ width: '100%' }}>
+          {snackbarMessage.split('\n').map((str, idx) => (
+            <span key={idx}>
+              {str}
+              <br />
+            </span>
+          ))}
+        </Alert>
+      </Snackbar>
+    </Box>
+  );
+};
+
+export default CatalogImport;

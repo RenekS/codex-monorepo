@@ -1,0 +1,23 @@
+﻿# secrets & certs
+.env
+.env.*
+*.pem
+
+# logs
+*.log
+logs/
+backend/logs/
+
+# builds & caches
+dist/
+build/
+coverage/
+**/.cache/
+
+# node
+node_modules/
+frontend/node_modules/
+
+# archives/backups
+*.zip
+*.bundle

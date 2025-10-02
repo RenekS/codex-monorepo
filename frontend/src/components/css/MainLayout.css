@@ -1,0 +1,45 @@
+/* MainLayout.css */
+
+body, html {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100vh;
+  overflow-x: hidden;
+}
+
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.header {
+  background-color: #f0f0f0;
+  padding: 10px;
+  text-align: center;
+  background-color: #F0F0F0;
+}
+
+.content {
+  display: flex;
+  flex-grow: 1;
+}
+
+.sidebar {
+  width: 200px; /* Původní šířka sidebaru */
+  transition: width 0.3s; /* Animace pro sbalení/rozbalení */
+}
+
+.sidebar.collapsed {
+  width: 50px; /* Šířka sbaleného sidebaru */
+}
+
+.main-layout {
+  flex-grow: 1;
+  background-color: #f0f0f0; /* Pro lepší viditelnost, můžete změnit */
+  padding: 10px;
+  background-color: #FAFAFA; /* Pozadí Hlavního Obsahu */
+  color: #343A40; /* Barva textu */
+}
+

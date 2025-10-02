@@ -1,0 +1,262 @@
+.order-detail-container {
+  padding: 20px;
+  font-family: Arial, sans-serif;
+}
+
+.order-detail-header, .order-detail-title, .order-detail-info {
+  margin-bottom: 10px;
+}
+
+.order-detail-title {
+  font-size: 24px;
+  font-weight: bold;
+}
+
+.order-detail-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.order-detail-table-header {
+  background: #f5f5f5;
+  text-align: left;
+}
+
+.order-detail-table-cell {
+  border: 1px solid #ddd;
+  padding: 8px;
+}
+
+.order-detail-button {
+  margin-top: 20px;
+  padding: 10px 15px;
+  border: none;
+  background: #007bff;
+  color: white;
+  cursor: pointer;
+}
+
+.order-detail-table-cell button {
+  margin: 0 5px;
+  padding: 5px;
+  background-color: #eee;
+  border: 1px solid #ccc;
+  cursor: pointer;
+}
+
+.order-detail-table-cell span {
+  font-weight: bold;
+}
+
+/* Number Pad Styles */
+.number-pad {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: white;
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  z-index: 1000;
+}
+
+.number-pad input {
+  width: 100%;
+  margin-bottom: 10px;
+  padding: 5px;
+  font-size: 16px;
+  text-align: center;
+}
+
+.number-pad-buttons {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-gap: 5px;
+  width: 60px; /* Větší šířka */
+  height: 60px; /* Větší výška */
+  font-size: 20px; /* Větší font */
+}
+
+.number-pad button {
+  padding: 10px;
+  font-size: 20px;
+  background-color: #f0f0f0;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  cursor: pointer;
+  width: 60px; /* Větší šířka */
+  height: 60px; /* Větší výška */
+}
+
+.number-pad button:hover {
+  background-color: #e6e6e6;
+}
+
+.number-pad .number-pad-submit,
+.number-pad .number-pad-cancel {
+  grid-column: span 3;
+  margin-top: 10px;
+}
+
+.package-count-cell {
+  display: flex;
+  align-items: center;
+}
+
+.package-count {
+  margin: 0 10px;
+}
+
+.open-pad-button {
+  margin-left: 10px;
+}
+
+.package-count-cell .over-count {
+  color: red;
+}
+
+.package-count-cell .normal-count {
+  color: green;
+}
+
+/* Modal Styles */
+.overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0,0,0,0.5);
+  z-index: 1030;
+}
+
+
+.modal-backdrop {
+  display: none;
+}
+
+
+
+.modal {
+  top: auto;
+  left: auto;
+  transform: none;
+ z-index: 1050;}
+
+.overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0,0,0,0.5);
+  z-index: 1040;
+}
+
+.modal-content {
+  padding: 20px;
+}
+
+.modal-header {
+  font-size: 24px;
+  font-weight: bold;
+  margin-bottom: 20px;
+}
+
+.modal-body {
+  margin-bottom: 20px;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+}
+.modal-split-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.picking-position-number {
+  font-size: 72px;
+  background-color: #f0f0f0;
+  padding: 20px;
+  margin-right: 20px;
+  border-radius: 5px;
+  flex: 1; /* Pro rovnoměrné rozložení */
+}
+
+.picking-details {
+  display: flex;
+  flex-direction: column;
+  background-color: #f0f0f0;
+  padding: 20px;
+  border-radius: 5px;
+  flex: 1; /* Pro rovnoměrné rozložení */
+}
+
+.quantity-info {
+  font-size: 24px;
+  flex-grow: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.quantity-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.quantity-control-button {
+  flex: 1; /* Rozdělení prostoru rovnoměrně mezi tlačítka */
+  /* Další styly pro tlačítka podle potřeby */
+}
+
+.quantity-display {
+  flex: 1; /* Stejný prostor jako pro tlačítka */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Další styly pro displej podle potřeby */
+}
+button {
+  padding: 15px 30px; /* Větší padding */
+  font-size: 18px; /* Větší font */
+}
+
+input[type="text"] {
+  font-size: 18px;
+  height: 50px; /* Větší výška */
+  padding: 10px; /* Větší padding */
+}
+
+
+
+
+table {
+  width: 100%;
+  border-collapse: collapse; /* Pro odstranění dvojitých hranic */
+}
+
+table th, table td {
+  border: 1px solid black;
+  padding: 8px;
+  text-align: left;
+  font-size: 18px;
+}
+
+table td div {
+  margin-bottom: 5px;
+}
+
+button {
+  margin-right: 10px;
+  padding: 5px 10px;
+  /* Přidejte další styly pro tlačítka podle potřeby */
+}
+.small-font {
+  font-size: 12px; /* Můžete upravit velikost podle potřeby */
+}

@@ -1,0 +1,88 @@
+import React, { memo, useCallback } from "react";
+import { Box, Button, TableCell, TableRow, Typography } from "@mui/material";
+import { NP_normalizeEAN } from "../utils/NPean";
+import { NP_computeOrderedBoxes } from "../utils/NPorders";
+
+const NPLineRow = memo(function NPLineRow({
+  line, idx, palletId,
+  // původní props nechávám kvůli kompatibilitě, ale nevoláme je:
+  onInc, onDec, onNumPad, onSaveWeight,
+  // NOVÉ: otevře dialog se seznamem naskenovaných balíků
+  onShowCartons
+}) {
+  const handleBlur = useCallback(
+    (e)=>{
+      const v = e.target.value;
+      if (v !== line.weight) onSaveWeight?.(line.id, v);
+    },
+    [line.id, line.weight, onSaveWeight]
+  );
+
+  const displayEANKrabice = line.tk_ean_krabice ? NP_normalizeEAN(line.tk_ean_krabice) : "—";
+  const orderedBoxes = Number.isFinite(Number(line?.ordered_boxes)) ? Number(line.ordered_boxes) : NP_computeOrderedBoxes(line);
+
+  return (
+    <TableRow>
+      <TableCell>{idx + 1}</TableCell>
+      <TableCell>{line.item_number}</TableCell>
+
+      <TableCell>
+        <Typography>{line.tk_nazev}</Typography>
+        <Typography variant="caption">EAN krabice: {displayEANKrabice}</Typography>
+      </TableCell>
+
+      <TableCell>{line.rozmer}</TableCell>
+
+      {/* Objednáno (krabic) */}
+      <TableCell>{orderedBoxes}</TableCell>
+
+      {/* Krabice naskenované */}
+      <TableCell>
+        {/* Odebrána tlačítka − a + */}
+        <Typography component="span" sx={{ mr: 1, fontWeight: 600 }}>
+          {line.scanned_boxes}
+        </Typography>
+        <Button
+          size="small"
+          onClick={() => {
+            // místo NumPad otevři seznam naskenovaných balíků
+            if (typeof onShowCartons === "function") onShowCartons(palletId, line);
+            else onNumPad?.(line.id); // fallback, kdyby parent ještě neměl onShowCartons
+          }}
+        >
+          #
+        </Button>
+      </TableCell>
+
+      {/* Ks v kr */}
+      <TableCell>{line.tk_ks_v_krabici ?? line.pcs_per_carton ?? "—"}</TableCell>
+
+      {/* Váha */}
+      <TableCell>
+        <input
+          type="number"
+          defaultValue={line.weight}
+          onBlur={handleBlur}
+          style={{ width: 80, padding: 4, fontSize: "0.875rem", border: "1px solid #ccc", borderRadius: 4 }}
+        />
+      </TableCell>
+
+      {/* Pick-pozice + sklad */}
+      <TableCell>
+        <Box
+          sx={{
+            display: "inline-block",
+            minWidth: 40, px: 1, py: 0.5, mx: 0.5,
+            textAlign: "center", border: "1px solid #888",
+            borderRadius: 1, fontWeight: "bold", fontSize: "1.1rem"
+          }}
+        >
+          {idx + 1}
+        </Box>
+        <Typography variant="body2">Sklad: {line.slot_name || "nepřiřazeno"}</Typography>
+      </TableCell>
+    </TableRow>
+  );
+});
+
+export default NPLineRow;

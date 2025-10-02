@@ -1,0 +1,32 @@
+.sidebar {
+  width: 200px;
+  background-color: #34568B; /* Tmavě modrá barva */
+  color: white;
+  transition: width 0.3s;
+}
+
+.sidebar.collapsed {
+  width: 50px;
+}
+
+.toggle-button, .link-button {
+  width: 100%;
+  padding: 10px;
+  margin: 0;
+  border: none;
+  background-color: #FFA500; /* Oranžová barva */
+  color: white;
+  cursor: pointer;
+  border-bottom: 1px solid white; /* Oddělující čára */
+  text-align: left;
+}
+
+.sidebar.collapsed .toggle-button, 
+.sidebar.collapsed .link-button {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-bottom: 0;
+}
+
+/* Další styly pro sidebar, pokud jsou potřeba */

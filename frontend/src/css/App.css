@@ -1,0 +1,426 @@
+/* CSS */
+
+.customScrollbarContainer {
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin-bottom: 5px; /* Pro oddělení od tabulky */
+}
+
+.customScrollbar {
+  height: 8px; /* Výška vlastního posuvníku */
+  width: 100%; /* Aby se přizpůsobil kontejneru */
+  background-color: #e0e0e0; /* Pozadí posuvníku */
+}
+
+.tableFixedHeader .table {
+  margin-bottom: 0; /* Odebere margin, aby nedocházelo k překryvům */
+}
+
+.tableScrollBody {
+  overflow-x: auto;
+  overflow-y: auto;
+}
+
+.content-section {
+  display: flex;
+  flex-direction: column;
+}
+
+@media (min-width: 768px) { /* Předpokládá se, že 768px je breakpoint pro střední obrazovky */
+  .content-section {
+    flex-direction: row;
+  }
+  .vehicle-list, .tyre-section {
+    width: 50%; /* Každá komponenta zabírá polovinu šířky na středních a větších obrazovkách */
+  }
+}
+
+.d-flex {
+  display: flex;
+}
+
+.flex-column {
+  flex-direction: column;
+}
+
+.flex-md-row {
+  flex-direction: row;
+}
+
+.content-wrapper {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  /* Není potřeba nastavovat margin zde */
+}
+
+.sidebar-expanded {
+  flex-basis: 250px; /* Příklad pro rozbalený sidebar */
+}
+
+.sidebar-collapsed {
+  flex-basis: 50px; /* Příklad pro sbalený sidebar */
+}
+
+.table-responsive-AX {
+  max-height: 100vh; /* Výška odpovídající výšce zobrazovací plochy */
+  max-width: 100%; /* Šířka může být nastavena dle potřeby */
+  overflow: auto; /* Povolit posuvníky */
+}
+
+.table-responsive-AX .table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2; /* Ujistěte se, že hlavička zůstává nad tělem tabulky */
+  background-color: #fff; /* Nastavení barvy pozadí hlavičky, aby nebyla průhledná */
+}
+
+/* netisknout */
+@media print {
+  .no-print {
+    display: none;
+  }
+}
+
+.red-text {
+  color: red;
+}
+
+.reserve-axles 
+{
+  justify-content: center !important; 
+  gap: 10px;
+
+}
+
+.tyres-left, .tyres-right {
+  display: flex;
+  flex-direction: row; /* Změní rozložení pneumatik na horizontální */
+  flex-wrap: wrap; /* Umožní pneumatikám zabírat více řádků pokud je to potřeba */
+  gap: 2px; /* Odstup mezi pneumatikami */
+}
+
+
+/* Vylepšení pro uspořádání pneumatik */
+ .tyres-left {
+  justify-content: flex-end !important; /* Zarovná levé pneumatiky k levé straně */
+}
+
+.tyres-right {
+  justify-content: flex-start !important; /* Zarovná pravé pneumatiky k pravé straně */
+}
+
+
+
+
+.dual-mounted {
+  display: flex;
+  flex-direction: row;
+  gap: 2px; /* Přizpůsobte mezery mezi pneumatikami podle potřeby */
+}
+
+/* Styly pro obrázek nápravy */
+
+
+.tyre-button-container {
+  position: relative; /* Nastavuje kontejner pneumatiky jako referenci pro absolutní pozicování */
+  display: flex;
+  align-items: center; /* Zarovná pneumatiku (a nápravu) na střed */
+  justify-content: center; /* Centruje obsah */
+  width: 65px !important;
+  
+}
+
+
+
+/* Větší mezera mezi sekcemi */
+.tyre-section {
+  margin-bottom: 0px; /* Zvětšení mezery mezi sekcemi */
+}
+
+
+
+.tire-button {
+  width: 30px; /* Příklad šířky */
+  height: 100px; /* Příklad výšky */
+  background-size: cover; /* Zajistí, že obrázek pokryje celou plochu tlačítka */
+  background-position: center; /* Centruje obrázek */
+  border: none; /* Odebere okraj tlačítka, pokud je požadováno */
+  cursor: pointer; /* Změní kurzor na ukazatel při najetí myši */
+  /* Další vlastnosti podle potřeby */
+}
+
+
+.card {
+  display: flex !important;
+  flex-direction: column !important; /* Pokud obsah karty není ve flex kontejneru */
+  flex-grow: 1 !important;
+}
+
+
+
+.content-wrapper > div {
+  flex: 1 1 100% !important; /* Zajistí, že div bude mít flexibilitu na menších obrazovkách */
+  margin-left: 0px !important;}
+
+.content-wrapper.p-3 {
+  margin-left: 0px !important; /* Zajistí, že div bude mít flexibilitu na menších obrazovkách */
+}
+
+/* Styl pro pneumatiky */
+.tire-row {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 10px; /* Odděluje řádky pneumatik */
+}
+
+.tire-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-right: 10px; /* Odděluje sloupce pneumatik */
+}
+
+
+.button-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+
+.sensor-data-inside-button {
+  text-align: left;
+  font-size: 0.8em; /* přizpůsobte velikost textu podle potřeby */
+}
+
+.tire-label {
+  font-weight: bold; /* Zvýrazněte název pneumatiky */
+  font-size: 1.2em; /* Zvětšete velikost písma názvu */
+  margin-right: 10px; /* Přidejte pravý margin pro oddělení od dat */
+  
+}
+
+.pressure-20 {
+  color: red; /* Barva pro hodnotu Pressure20 */
+}
+
+.tire-button.active {
+  background-color: green; /* nebo jiná barva podle vašeho výběru */
+}
+
+
+
+.context-menu {
+  border: 2px solid red; /* viditelný rámeček pro testování */
+  background-color: white;
+  position: absolute;
+  z-index: 1000;
+  /* ...další styly... */
+}
+
+.context-menu ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.context-menu ul li {
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+.context-menu ul li:hover {
+  background-color: #eee;
+}
+
+.count-control {
+  display: flex; /* Zapne flexbox pro tento kontejner */
+  align-items: center; /* Zarovná položky ve středu ve vertikálním směru */
+  justify-content: space-between; /* Rozloží položky rovnoměrně s mezerou mezi nimi */
+}
+
+.count-control .btn, .count-control .task-count-input {
+  width: 35px; /* Nastaví šířku tlačítek a vstupního pole na 35px */
+  height: 35px; /* Nastaví výšku tlačítek a vstupního pole na 35px pro uniformní vzhled */
+  padding: 0; /* Odebere padding u tlačítek, aby lépe pasovaly do určené šířky a výšky */
+  margin: 0 2px; /* Přidá malou mezeru mezi tlačítky a vstupním polem */
+}
+
+.count-control .task-count-input {
+  text-align: center; /* Zarovná text uvnitř vstupního pole na střed */
+}
+
+
+.form-control {
+  width: 100%;
+}
+.modified {
+  background-color: yellow; /* nebo jakoukoliv barvu preferujete */
+}
+
+@media (max-width: 600px) {
+  .count-control {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .task-count-input {
+    margin: 5px 0;
+  }
+}
+
+/* App.css */
+.main-box {
+  padding: 0 !important; /* Odstraní vnitřní okraje */
+}
+
+.content-box {
+  padding: 0 !important; /* Odstraní vnitřní okraje */
+}
+
+.service-sheet-tasks.MuiBox-root {
+   padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+
+.MuiGrid-root.MuiGrid-item.MuiGrid-grid-xs-12 {
+   padding-left: 0 !important;
+  padding-right: 0 !important;
+  
+}
+
+.MuiCardContent-root {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+
+.service-sheet-tyres.MuiBox-root
+ {
+   padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+
+
+.rozmer-a-tlak-mobil
+{
+ display: none;
+}
+
+@media (max-width: 600px) {
+  .sensor-detail.aktualni {
+    display: none;
+  }
+}
+
+@media (max-width: 600px) {
+ .grid-item-1.MuiGrid-grid-xs-4.MuiGrid-item {
+    display: none;
+  }
+}
+@media (max-width: 600px) {
+  .axles {
+    display: none;
+  }
+}
+
+.rozmer-a-tlak-mobil
+{
+ margin-bottom: 0px;
+}
+
+@media (max-width: 600px) {
+.MuiGrid-root.MuiGrid-item.MuiGrid-grid-xs-12 {
+   padding-top: 0px !important;
+   
+  
+  }  
+}
+
+.grid-item-3 {
+   padding-top: 0px !important;
+   padding-left: 0px !important; 
+  
+  }  
+
+.grid-item-5 {
+   padding-top: 0px !important;
+   padding-left: 0px !important; 
+  
+  }  
+
+.grid-container-2 {
+  display: flex;
+  justify-content: center;
+}
+
+@media (max-width: 600px) {
+.MuiBox-root.axle-box.naprava {
+   left: 15px !important;
+   margin-bottom: 7px;}}
+
+.bar.MuiTypography-caption.MuiTypography-root {
+display: none;
+}
+
+@media (max-width: 600px) {
+  .MuiButtonBase-root {
+    width: 100%;
+    margin-bottom: 10px;
+  }
+
+  .MuiCardHeader-root {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .MuiCardHeader-action {
+    margin-left: 0;
+  }
+  
+  .MuiCardHeader-title {
+    text-align: center;
+    width: 100%;
+  }
+  
+  .MuiCardContent-root {
+    padding-left: 0;
+    padding-right: 0;
+  }
+}
+
+
+
+@media (max-width: 600px) {
+  .info-section {
+    display: none;
+  }
+  .button-section {
+    width: 100%;
+    flex-basis: 100% !important;
+   max-width: 100% !important;
+  }
+}
+
+
+.aktualni.tyre-label {
+ left: 5px !important;
+ top: -10px;
+}
+
+.prepocitany.tyre-label {
+ left: 5px !important;
+ 
+}
+
+.grid-item-4.MuiGrid-grid-xs-2.MuiGrid-item.MuiGrid-container.MuiGrid-root {
+  padding: 0px;
+}
+
+/* Pouze pro InputLabel (například pro Select) */
+.MuiInputLabel-root {
+    color: black !important;
+}
+

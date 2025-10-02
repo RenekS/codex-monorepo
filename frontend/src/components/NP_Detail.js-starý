@@ -1,0 +1,618 @@
+// src/pages/NP_Detail.jsx
+import React, {
+  useEffect, useState, useRef, memo, useCallback, useMemo
+} from "react";
+import { useParams } from "react-router-dom";
+import axios from "axios";
+import {
+  Box, Grid, Card, Button, Typography, Accordion,
+  AccordionSummary, AccordionDetails, Checkbox, Table,
+  TableHead, TableRow, TableCell, TableBody, Dialog,
+  DialogTitle, DialogContent, DialogActions, TextField,
+  Collapse, Snackbar, Alert, Chip
+} from "@mui/material";
+
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import ExpandLessIcon from "@mui/icons-material/ExpandLess";
+
+import changeSound  from "../sounds/change.mp3";
+import successSound from "../sounds/success-sound.mp3";
+import errorSound   from "../sounds/error-sound.mp3";
+
+import useBarcodeScanner from "../hooks/useBarcodeScanner";
+import ScanWeighModal from "../components/ScanWeighModal";
+import AllocateSlotsModal from "../components/AllocateSlotsModal";
+
+/* ===================================================================== */
+/* Number-pad dialog                                                     */
+/* ===================================================================== */
+const NumberPad = ({ initialValue, onSubmit, onCancel }) => {
+  const [val, setVal] = useState(initialValue.toString());
+  const write = (n) => setVal((p) => (p === "0" ? n.toString() : p + n));
+  const back  = () => setVal((p) => (p.length > 1 ? p.slice(0, -1) : "0"));
+  return (
+    <Box textAlign="center">
+      <TextField
+        value={val}
+        InputProps={{ readOnly: true, sx: { textAlign: "center" } }}
+        sx={{ width: "100%", mb: 2, fontSize: "1.5rem" }}
+      />
+      <Box sx={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:1 }}>
+        {[1,2,3,4,5,6,7,8,9,0].map((n)=>(
+          <Button key={n} variant="outlined" onClick={()=>write(n)}>{n}</Button>
+        ))}
+      </Box>
+      <Box mt={2} display="flex" justifyContent="space-between">
+        <Button onClick={()=>setVal("0")}>C</Button>
+        <Button onClick={back}>←</Button>
+        <Button variant="contained" color="success" onClick={()=>onSubmit(parseInt(val,10))}>
+          Potvrdit
+        </Button>
+        <Button color="error" onClick={onCancel}>Zrušit</Button>
+      </Box>
+    </Box>
+  );
+};
+
+/* ===================================================================== */
+/* Pomocné funkce                                                        */
+/* ===================================================================== */
+const normalizeEAN = (s) => String(s || "").trim().replace(/^0+/, "");
+
+// fallback (když BE neposlal ordered_boxes)
+const computeOrderedBoxes = (line) => {
+  const pcs = Number(line?.objednano || 0);
+  const per = Number(line?.tk_ks_v_krabici || line?.pcs_per_carton || 0);
+  if (!isFinite(pcs) || !isFinite(per) || per <= 0) return 0;
+  return Math.ceil(pcs / per);
+};
+
+/* ===================================================================== */
+/* Jednotlivý řádek tabulky – memo pro výkon                             */
+/* ===================================================================== */
+const LineRow = memo(function LineRow({
+  line, idx, palletId, onInc, onDec, onNumPad, onSaveWeight,
+  allSlots, onOpenAllocate
+}) {
+  const handleBlur = useCallback(
+    (e)=>{
+      const v = e.target.value;
+      if (v !== line.weight) onSaveWeight(line.id, v);
+    },
+    [line.id, line.weight, onSaveWeight]
+  );
+
+  const displayEANKrabice = line.tk_ean_krabice ? normalizeEAN(line.tk_ean_krabice) : "—";
+  const orderedBoxes = Number.isFinite(Number(line?.ordered_boxes))
+    ? Number(line.ordered_boxes)
+    : computeOrderedBoxes(line);
+
+  return (
+    <TableRow>
+      <TableCell>{idx + 1}</TableCell>
+      <TableCell>{line.item_number}</TableCell>
+
+      <TableCell>
+        <Typography>{line.tk_nazev}</Typography>
+        <Typography variant="caption">EAN krabice: {displayEANKrabice}</Typography>
+      </TableCell>
+
+      <TableCell>{line.rozmer}</TableCell>
+
+      {/* Objednáno (krabic) */}
+      <TableCell>{orderedBoxes}</TableCell>
+
+      {/* Krabice naskenované */}
+      <TableCell>
+        <Button size="small" onClick={()=>onDec(palletId,line.id)}>−</Button>
+        {line.scanned_boxes}
+        <Button size="small" onClick={()=>onInc(palletId,line.id)}>+</Button>
+        <Button size="small" onClick={()=>onNumPad(line.id)}>#</Button>
+      </TableCell>
+
+      {/* Ks v kr */}
+      <TableCell>{line.tk_ks_v_krabici ?? line.pcs_per_carton ?? "—"}</TableCell>
+
+      {/* Váha */}
+      <TableCell>
+        <input
+          type="number"
+          defaultValue={line.weight}
+          onBlur={handleBlur}
+          style={{
+            width: 80, padding: 4,
+            fontSize: "0.875rem", border: "1px solid #ccc", borderRadius: 4
+          }}
+        />
+      </TableCell>
+
+      {/* Pozice: všechny sloty + tlačítko Umístit */}
+      <TableCell>
+        <Box sx={{ display:'flex', gap:0.5, flexWrap:'wrap', mb:1 }}>
+          {(allSlots||[]).map(s=>(
+            <Chip
+              key={s.id}
+              size="small"
+              label={`${s.slot_name}${Number.isFinite(s.capacity)?` (${s.cartons_now}/${s.capacity})`:''}`}
+              variant="outlined"
+            />
+          ))}
+        </Box>
+        <Button size="small" variant="outlined" onClick={()=>onOpenAllocate(line)}>
+          Umístit
+        </Button>
+      </TableCell>
+    </TableRow>
+  );
+});
+
+/* ===================================================================== */
+/* Hlavní komponenta                                                     */
+/* ===================================================================== */
+export default function NP_Detail() {
+  const { id } = useParams();
+
+  const [header,  setHeader]  = useState(null);
+  const [pallets, setPallets] = useState([]);
+  const [lines,   setLines]   = useState({});
+  const [loading, setLoading] = useState(true);
+
+  const [collapsed,setCollapsed] = useState(false);
+  const [selNo,setSelNo] = useState("");
+
+  const [editingLine,setEditingLine] = useState(null);
+
+  const [modalOpen,setModalOpen]     = useState(false);
+  const [modalLine,setModalLine]     = useState(null);
+  const [modalPallet,setModalPallet] = useState(null);
+  const [manualWeight,setManualWeight]=useState("");
+
+  const [scanOpen, setScanOpen] = useState(false);
+  const [scanCtx, setScanCtx]   = useState(null);
+
+  const [snack,setSnack] = useState({open:false,msg:"",sev:"success"});
+
+  // sklady pro kapacity/obsazenost slotů (warehouse/v2)
+  const [warehouses, setWarehouses] = useState([]);
+
+  // alokační modal
+  const [allocOpen, setAllocOpen] = useState(false);
+  const [allocLine, setAllocLine] = useState(null);
+
+  const changeAudio  = useRef(new Audio(changeSound));
+  const successAudio = useRef(new Audio(successSound));
+  const errorAudio   = useRef(new Audio(errorSound));
+
+  // NP detail
+  useEffect(()=>{
+    (async()=>{
+      try{
+        const { data } = await axios.get(`${process.env.REACT_APP_API_URL}/np/detail/${id}`);
+        setHeader(data.header);
+        setPallets(data.pallets.map(p=>({...p,checked:!!p.checked})));
+        const grouped={};
+        data.pallets.forEach(p=>{
+          grouped[p.id]=(p.lines||[]).map(l=>({
+            ...l,
+            scanned_boxes: l.scanned_boxes || 0,
+            weight       : l.weight || "",
+            tk_nazev     : l.tk_nazev || l.popis || "—",
+            tk_pozice    : l.tk_pozice || null,
+          }));
+        });
+        setLines(grouped);
+      }catch(e){ console.error("❌ fetch",e); }
+      finally{ setLoading(false); }
+    })();
+  },[id]);
+
+  // Warehouses V2 (obsazenost/kapacity)
+  useEffect(()=>{
+    (async()=>{
+      try{
+        const url = `${process.env.REACT_APP_API_URL}/warehouse/v2?includeCartons=1`;
+        const { data } = await axios.get(url);
+        const fetched = Array.isArray(data?.warehouses)
+          ? data.warehouses
+          : (Array.isArray(data) ? data : []);
+        setWarehouses(fetched);
+      }catch(e){
+        console.warn("Warehouse V2 load failed", e);
+        setWarehouses([]);
+      }
+    })();
+  },[]);
+
+  const post = (url,body)=>axios.post(url,body).catch(()=>{});
+
+  const patchLine = (lineId, patch)=>{
+    setLines(prev=>{
+      const out={};
+      for(const pid in prev){
+        out[pid]=prev[pid].map(l=>l.id===lineId?{...l, ...patch}:l);
+      }
+      return out;
+    });
+  };
+
+  const updateBoxes = (lineId,count)=>{
+    setLines(p=>{
+      const n={}; for(const pid in p)
+        n[pid]=p[pid].map(l=>l.id===lineId?{...l,scanned_boxes:count}:l);
+      return n;
+    });
+  };
+
+  const saveWeight = (lineId,weight)=>{
+    setLines(p=>{
+      const n={}; for(const pid in p)
+        n[pid]=p[pid].map(l=>l.id===lineId?{...l,weight}:l);
+      return n;
+    });
+    post(`${process.env.REACT_APP_API_URL}/np/weight-save`,{line_id:lineId,weight});
+  };
+
+  const inc=(pid,lid)=>{
+    const line=lines[pid].find(l=>l.id===lid);
+    const nb=line.scanned_boxes+1;
+    updateBoxes(lid,nb);
+    try { changeAudio.current.play(); } catch {}
+    const orderedBoxes = Number.isFinite(Number(line?.ordered_boxes)) ? Number(line.ordered_boxes) : computeOrderedBoxes(line);
+    if(nb===orderedBoxes) try { successAudio.current.play(); } catch {}
+    if(nb>orderedBoxes)   try { errorAudio.current.play(); } catch {}
+    showModal({...line,scanned_boxes:nb},pid);
+  };
+  const dec=(pid,lid)=>{
+    const line=lines[pid].find(l=>l.id===lid);
+    const nb=Math.max(line.scanned_boxes-1,0);
+    updateBoxes(lid,nb);
+    try { changeAudio.current.play(); } catch {}
+  };
+
+  const showModal=(l,pid)=>{
+    setModalLine(l); setModalPallet(pid);
+    setManualWeight(l.weight||"");
+    setModalOpen(true);
+  };
+
+  const handleModalOk = async()=>{
+    if(!modalLine) return;
+    saveWeight(modalLine.id, manualWeight);
+    const basePos = lines[modalPallet].findIndex(l=>l.id===modalLine.id)+1;
+    const prep_position = Math.min(basePos,20);
+    try{
+      const { data } = await axios.post(`${process.env.REACT_APP_API_URL}/np/measure`,{
+        line_id        : modalLine.id,
+        pallet_slot_id : modalLine.pallet_slot_id || null,
+        measured_weight: manualWeight || 0,
+        prep_position,
+        user_id      : 1,
+      });
+      if (data?.line) {
+        patchLine(data.line.id, data.line);
+      }
+      setSnack({open:true,msg:"Měření uloženo",sev:"success"});
+    }catch(e){
+      console.error("❌ measure",e);
+      setSnack({open:true,msg:"Chyba při ukládání měření",sev:"error"});
+    }
+    setModalOpen(false);
+  };
+
+  const realPieces = ()=>{
+    if(!modalLine || !manualWeight) return "?";
+    const pcsInCarton = Number(modalLine.tk_ks_v_krabici || modalLine.pcs_per_carton || 0);
+    const refWeight   = Number(modalLine.gross_weight_ctn_kg || 0);
+    if (!pcsInCarton || !refWeight) return "?";
+    const perPiece = refWeight / pcsInCarton;
+    return perPiece ? Math.round(parseFloat(manualWeight)/perPiece) : "?";
+  };
+  const diff = ()=>{
+    if(!modalLine || !manualWeight) return {v:"?",c:"text.primary"};
+    const d=parseFloat(manualWeight)-Number(modalLine.gross_weight_ctn_kg || 0);
+    return {v:d.toFixed(2), c:d>0?"error.main":d<0?"success.main":"text.primary"};
+  };
+
+  function findLineByEANInSelectedPallet(eanRaw) {
+    if (!selNo) return null;
+    const ean = normalizeEAN(eanRaw);
+    const selectedPallets = pallets.filter(p => p.pallet_no === selNo);
+    for (const pal of selectedPallets) {
+      const lst = lines[pal.id] || [];
+      const l = lst.find(x => {
+        const eanKrab = normalizeEAN(x.tk_ean_krabice);
+        return eanKrab && eanKrab === ean;
+      });
+      if (l) return { line: l, palletId: pal.id };
+    }
+    return null;
+  }
+
+  useBarcodeScanner(async (ean) => {
+    const code = String(ean || "").trim();
+    if (!selNo) {
+      setSnack({ open:true, msg:"Nejprve vyber paletu nahoře.", sev:"error" });
+      try { errorAudio.current.play(); } catch {}
+      return;
+    }
+    const found = findLineByEANInSelectedPallet(code);
+    if (!found) {
+      setSnack({ open:true, msg:`EAN ${normalizeEAN(code)} nepatří do zvolené palety`, sev:"error" });
+      try { errorAudio.current.play(); } catch {}
+      return;
+    }
+    // ihned po skenu přičíst 1 krabici
+    updateBoxes(found.line.id, (Number(found.line.scanned_boxes || 0) + 1));
+    try { changeAudio.current.play(); } catch {}
+    setScanCtx({ ...found, ean: normalizeEAN(code) });
+    setScanOpen(true);
+  }, 100);
+
+  const handleScanSaved = (lineId, measured, ok) => {
+    saveWeight(lineId, measured);
+    try { (ok ? successAudio : errorAudio).current.play(); } catch {}
+  };
+
+  // patch po úspěšném měření z modalu (vrací sjednocený "line")
+  const handleLineUpdated = (line) => {
+    if (line?.id) patchLine(line.id, line);
+  };
+
+  // patch po nastavení referenční váhy
+  const handleRefUpdated = (lineId, newGross) => {
+    patchLine(lineId, { gross_weight_ctn_kg: newGross });
+  };
+
+  // --- sloty s produktem pomocí warehouse v2 ---
+  const getAllSlotsForProduct = useCallback((productCode)=>{
+    const code = String(productCode||"").trim();
+    if (!code) return [];
+    const out = [];
+    (warehouses||[]).forEach(b=>{
+      (b.shelves||[]).forEach(sh=>{
+        (sh.sections||[]).forEach(sec=>{
+          const slots = sec?.pallet_slots || sec?.palletSlots || [];
+          slots.forEach(sl=>{
+            const cartons = Number(sl?.cartons_count ?? sl?.carton_count ?? 0);
+            const cap = Number(sl?.capacity_cartons ?? sl?.max_cartons ?? NaN);
+            const contains = (
+              (String(sl?.product_id||"").trim()===code) ||
+              (Array.isArray(sl?.products) && sl.products.some(p=>String(p?.product_code||"").trim()===code))
+            );
+            if (contains){
+              out.push({
+                id: sl.id,
+                slot_name: sl.slot_name || `${sec.name || sec.id}-${sl.position ?? ""}`,
+                cartons_now: cartons,
+                capacity: Number.isFinite(cap) ? cap : null
+              });
+            }
+          });
+        });
+      });
+    });
+    // stabilní řazení – čistě informativní
+    return out.sort((a,b)=> (b.capacity??9999)-(a.capacity??9999));
+  }, [warehouses]);
+
+  // alokační modal open/save
+  const openAllocate = useCallback((line)=>{
+    setAllocLine(line);
+    setAllocOpen(true);
+  },[]);
+  const closeAllocate = ()=>{ setAllocOpen(false); setAllocLine(null); };
+
+  const saveAllocation = async (lineId, allocations)=>{
+    try{
+      await axios.post(`${process.env.REACT_APP_API_URL}/np/allocate-slots`, {
+        line_id: lineId,
+        allocations // [{slot_id, cartons}]
+      });
+      setSnack({open:true, msg:"Umístění uloženo", sev:"success"});
+    }catch(e){
+      console.error("❌ allocate-slots", e);
+      setSnack({open:true, msg:"Chyba ukládání umístění", sev:"error"});
+    }
+  };
+
+  if(loading) return <Typography>Načítám…</Typography>;
+  if(!header) return <Typography>Záznam nenalezen</Typography>;
+
+  const uniqNos=[...new Set(pallets.map(p=>p.pallet_no))];
+  const view=selNo ? pallets.filter(p=>p.pallet_no===selNo) : pallets;
+
+  return (
+    <Box p={2}>
+      <Card variant="outlined" sx={{p:2,mb:3}}>
+        <Typography variant="h5">Dodací listttt: {header.dodaci_list}</Typography>
+        <Typography>Číslo NP: {header.np_number || "—"}</Typography>
+        <Typography>Datum: {new Date(header.datum).toLocaleDateString()}</Typography>
+        {header.supplier_name    &&<Typography>Dodavatel: {header.supplier_name}</Typography>}
+        {header.supplier_address &&<Typography>Adresa: {header.supplier_address}</Typography>}
+      </Card>
+
+      <Card variant="outlined" sx={{p:2,mb:2}}>
+        <Box display="flex" alignItems="center" mb={1}>
+          <Typography sx={{flexGrow:1}}>Vyber paletu:</Typography>
+          <Button size="small"
+            startIcon={collapsed?<ExpandMoreIcon/>:<ExpandLessIcon/>}
+            onClick={()=>setCollapsed(v=>!v)}
+          >
+            {collapsed ? "Rozbalit" : "Skrýt"}
+          </Button>
+        </Box>
+        <Collapse in={!collapsed}>
+          <Box sx={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(90px,1fr))",gap:1}}>
+            <Button variant={selNo===""?"contained":"outlined"} onClick={()=>setSelNo("")}>Všechny</Button>
+            {uniqNos.map(n=>(
+              <Button key={n} variant={selNo===n?"contained":"outlined"} onClick={()=>setSelNo(n)}>
+                {n}
+              </Button>
+            ))}
+          </Box>
+        </Collapse>
+        <Typography variant="caption" sx={{mt:1,display:'block'}}>
+          Po naskenování EAN se okamžitě přičte 1 krabice a otevře se vážicí modal.
+        </Typography>
+      </Card>
+
+      {view.map(p=>(
+        <Accordion key={p.id} defaultExpanded sx={{mb:2}}>
+          <AccordionSummary expandIcon={<ExpandMoreIcon/>}>
+            <Grid container alignItems="center" spacing={2}>
+              <Grid item xs={4}><Typography variant="h6">Paleta {p.pallet_no}</Typography></Grid>
+              <Grid item xs={2}>GW: {p.pallet_weight} kg</Grid>
+              <Grid item xs={2}>Objem: {p.volume_cbm} cbm</Grid>
+              <Grid item xs={2}>
+                <Checkbox
+                  checked={p.checked}
+                  onChange={()=>post(`${process.env.REACT_APP_API_URL}/np/pallet-check`,
+                    {pallet_id:p.id,checked:!p.checked}).then(
+                      ()=>setPallets(ps=>ps.map(x=>x.id===p.id?{...x,checked:!x.checked}:x))
+                    )}
+                />{" "}Zkontrolováno
+              </Grid>
+            </Grid>
+          </AccordionSummary>
+          <AccordionDetails>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>#</TableCell>
+                  <TableCell>Kód</TableCell>
+                  <TableCell>Název</TableCell>
+                  <TableCell>Rozměr</TableCell>
+                  <TableCell>Objednáno&nbsp;(kr)</TableCell>
+                  <TableCell>Krabic</TableCell>
+                  <TableCell>Ks&nbsp;v&nbsp;kr</TableCell>
+                  <TableCell>Váha&nbsp;(kg)</TableCell>
+                  <TableCell>Pozice (všechny sloty)</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {lines[p.id]?.map((l,i)=>{
+                  const slots = getAllSlotsForProduct(l.item_number);
+                  return (
+                    <LineRow
+                      key={l.id}
+                      line={l}
+                      idx={i}
+                      palletId={p.id}
+                      onInc={inc}
+                      onDec={dec}
+                      onNumPad={setEditingLine}
+                      onSaveWeight={saveWeight}
+                      allSlots={slots}
+                      onOpenAllocate={openAllocate}
+                    />
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </AccordionDetails>
+        </Accordion>
+      ))}
+
+      {editingLine && (
+        <Dialog open onClose={()=>setEditingLine(null)}>
+          <DialogTitle>Zadat počet krabic</DialogTitle>
+          <DialogContent>
+            <NumberPad
+              initialValue={Object.values(lines).flat().find(l=>l.id===editingLine).scanned_boxes}
+              onSubmit={v=>{updateBoxes(editingLine,v);setEditingLine(null);}}
+              onCancel={()=>setEditingLine(null)}
+            />
+          </DialogContent>
+        </Dialog>
+      )}
+
+      <Dialog open={modalOpen} onClose={()=>setModalOpen(false)} fullWidth maxWidth="sm">
+        <DialogTitle sx={{textAlign:"center",fontSize:"2rem"}}>
+          {modalPallet && modalLine
+            ? lines[modalPallet].findIndex(l=>l.id===modalLine.id)+1
+            : "-"}
+        </DialogTitle>
+        <DialogContent>
+          {modalLine && (
+            <Box>
+              <Typography variant="h6">{modalLine.tk_nazev}</Typography>
+              <Typography>Číslo položky: {modalLine.item_number}</Typography>
+
+              <Box mt={2}>
+                <Typography>Objednáno krabic: {Number.isFinite(Number(modalLine.ordered_boxes)) ? modalLine.ordered_boxes : computeOrderedBoxes(modalLine)}</Typography>
+                <Typography>Aktuální krabic: {modalLine.scanned_boxes}</Typography>
+                <Typography>Ks v kr (deklar.): {modalLine.tk_ks_v_krabici ?? modalLine.pcs_per_carton ?? "—"}</Typography>
+                <Typography>Sklad (slot): {modalLine.slot_name || "nepřiřazeno"}</Typography>
+              </Box>
+
+              <Box mt={2}>
+                <TextField
+                  fullWidth
+                  label="Aktuální váha krabice (kg)"
+                  type="number"
+                  value={manualWeight}
+                  onChange={(e)=>setManualWeight(e.target.value)}
+                  sx={{mb:1}}
+                />
+                <Typography> Referenční váha krabice: {modalLine.gross_weight_ctn_kg} kg</Typography>
+                <Typography>
+                  Rozdíl:&nbsp;
+                  <Box component="span" sx={{color:diff().c,fontWeight:"bold"}}>
+                    {diff().v} kg
+                  </Box>
+                </Typography>
+                <Typography>
+                  Odhad reálného počtu kusů v krabici: {realPieces()}
+                </Typography>
+              </Box>
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions sx={{pb:3}}>
+          <Button variant="contained" color="success" onClick={handleModalOk}>OK</Button>
+          <Button variant="outlined"  color="error"   onClick={()=>setModalOpen(false)}>Zrušit</Button>
+        </DialogActions>
+      </Dialog>
+
+      {scanOpen && scanCtx && (
+        <ScanWeighModal
+          open={scanOpen}
+          onClose={()=>{ setScanOpen(false); setScanCtx(null); }}
+          line={scanCtx.line}
+          palletId={scanCtx.palletId}
+          ean={scanCtx.ean}
+          linesOnPallet={lines[scanCtx.palletId] || []}
+          successAudio={successAudio}
+          errorAudio={errorAudio}
+          onSaved={handleScanSaved}
+          onLineUpdated={handleLineUpdated}
+          onRefUpdated={handleRefUpdated}
+          slotName={scanCtx.line?.slot_name || null}
+        />
+      )}
+
+      {/* MODAL pro umístění zboží do slotů (minimapa + auto rozdělení) */}
+      {allocOpen && allocLine && (
+        <AllocateSlotsModal
+          open={allocOpen}
+          onClose={closeAllocate}
+          warehouses={warehouses}
+          line={allocLine}
+          defaultCartonsToPlace={allocLine.scanned_boxes}
+          onSave={saveAllocation}
+        />
+      )}
+
+      <Snackbar
+        open={snack.open}
+        autoHideDuration={3500}
+        onClose={()=>setSnack(s=>({...s,open:false}))}
+        anchorOrigin={{vertical:"bottom",horizontal:"center"}}
+      >
+        <Alert severity={snack.sev} onClose={()=>setSnack(s=>({...s,open:false}))}>
+          {snack.msg}
+        </Alert>
+      </Snackbar>
+    </Box>
+  );
+}

@@ -1,0 +1,26 @@
+/* Zbytek vašeho CSS zůstává stejný */
+
+table {
+  /* Styly pro tabulku */
+  border-collapse: collapse;
+  width: 100%;
+}
+
+th, td {
+  /* Styly pro buňky tabulky */
+  border: 1px solid #ddd;
+  padding: 8px;
+}
+
+tr:nth-child(even){background-color: #f2f2f2;}
+
+tr:hover {background-color: #ddd;}
+
+th {
+  /* Styly pro záhlaví tabulky */
+  padding-top: 12px;
+  padding-bottom: 12px;
+  text-align: left;
+  background-color: #04AA6D;
+  color: white;
+}

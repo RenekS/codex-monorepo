@@ -1,0 +1,275 @@
+.order-detail-container {
+  padding: 20px;
+  font-family: Arial, sans-serif;
+}
+
+.order-detail-header {
+  border-bottom: 2px solid #ddd;
+  padding-bottom: 10px;
+  margin-bottom: 20px;
+}
+
+.order-detail-title {
+  font-size: 24px;
+  font-weight: bold;
+  margin-bottom: 10px;
+}
+
+.order-detail-info {
+  margin-bottom: 5px;
+}
+
+.order-detail-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.order-detail-table-header {
+  background: #f5f5f5;
+  text-align: left;
+}
+
+.order-detail-table-cell {
+  border: 1px solid #ddd;
+  padding: 8px;
+}
+
+.order-detail-button {
+  margin-top: 20px;
+  padding: 10px 15px;
+  border: none;
+  background: #007bff;
+  color: white;
+  cursor: pointer;
+}
+
+
+.order-detail-table-cell button {
+  margin: 0 5px;
+  padding: 5px;
+  background-color: #eee;
+  border: 1px solid #ccc;
+  cursor: pointer;
+}
+
+.order-detail-table-cell span {
+  font-weight: bold;
+}
+
+
+
+
+/* Kontejner modalu NumberPad */
+.number-pad {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1000;
+  width: 350px;
+  padding: 20px;
+  background-color: #fff;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+/* Vstupní pole */
+.number-pad input {
+  width: 100%;
+  height: 50px;
+  font-size: 1.5em;
+  margin-bottom: 20px;
+  text-align: right;
+  padding: 0 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+/* Kontejner, který dělí numerickou část a akční sloupec */
+.number-pad-container {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 15px;
+  flex-shrink: 0;
+}
+
+/* Numerická část vlevo */
+.number-pad-numbers {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Grid pro čísla 1–9 */
+.number-pad-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.number-pad-grid button {
+  width: 100%;
+  height: 80px;
+  font-size: 1.5em;
+  border: none;
+  background-color: #f0f0f0;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.number-pad-grid button:hover {
+  background-color: #e0e0e0;
+}
+
+/* Dolní řada číselné části: tlačítko 0 a plus */
+.number-pad-bottom {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.number-pad-bottom button {
+  flex: 1;
+  height: 80px;
+  font-size: 1.5em;
+  border: none;
+  background-color: #f0f0f0;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.number-pad-bottom button:hover {
+  background-color: #e0e0e0;
+}
+
+/* Speciálně tlačítko plus má zůstat v rámci číslic */
+.number-pad-plus {
+  /* Můžeš upravit barvu nebo efekt, pokud potřebuješ */
+}
+
+/* Akční tlačítka – pravý sloupec */
+.number-pad-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.number-pad-actions .action-btn {
+  width: 100%;
+  height: 60px;
+  font-size: 1.2em;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+/* Barvy pro jednotlivé akční tlačítka */
+.number-pad-actions .action-btn:hover {
+  background-color: #e0e0e0;
+}
+
+.number-pad-actions .action-btn:nth-child(1) {
+  background-color: #17a2b8; /* upravit – modrozelená pro "upravit" */
+  color: #fff;
+}
+
+.number-pad-actions .action-btn:nth-child(2) {
+  background-color: #ffc107; /* žlutá/oranžová pro "smazat" */
+  color: #fff;
+}
+
+.number-pad-actions .action-btn:nth-child(3) {
+  background-color: #28a745; /* zelená pro "nastavit" */
+  color: #fff;
+}
+
+.number-pad-actions .action-btn:nth-child(4) {
+  background-color: #dc3545; /* červená pro "zrušit" */
+  color: #fff;
+}
+
+.number-pad-actions .action-btn:nth-child(1):hover {
+  background-color: #138496;
+}
+
+.number-pad-actions .action-btn:nth-child(2):hover {
+  background-color: #e0a800;
+}
+
+.number-pad-actions .action-btn:nth-child(3):hover {
+  background-color: #218838;
+}
+
+.number-pad-actions .action-btn:nth-child(4):hover {
+  background-color: #c82333;
+}
+
+/* Styl pro tlačítko plus (čísla) */
+.number-pad-plus {
+  flex: 1;
+  height: 80px;
+  font-size: 1.5em;
+  border: none;
+  background-color: #f0f0f0;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.number-pad-plus:hover {
+  background-color: #e0e0e0;
+}
+
+/* Styl pro aktivní tlačítko plus */
+.number-pad-plus.active {
+  background-color: #b3d9ff; /* například světle modrá */
+}
+
+
+
+
+
+
+
+
+
+
+
+
+.package-count-cell {
+  display: flex;
+  align-items: center;
+}
+
+.package-count {
+  margin: 0 10px; /* Přidává mezery okolo číselné hodnoty */
+}
+
+.open-pad-button {
+  margin-left: 10px; /* Přidává mezery okolo tlačítka číselníku */
+}
+.package-count-cell .over-count {
+  color: red; /* Červené zvýraznění pro překročení počtu */
+}
+
+.package-count-cell .normal-count {
+  color: green; /* Zelené zvýraznění pro normální počet */
+}
+.exact {
+  color: green;
+}
+
+.excess {
+  color: red;
+}
+
+

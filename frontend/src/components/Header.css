@@ -1,0 +1,33 @@
+.header {
+  display: flex;
+  justify-content: space-between; /* Rozloží sekce rovnoměrně */
+  align-items: center; /* Vertikální zarovnání obsahu */
+  padding: 10px;
+  background-color: #f8f9fa; /* Barva pozadí hlavičky */
+}
+.header-section {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.header-section.header-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start; /* Zarovná obsah vlevo */
+}
+.search-results {
+  background-color: lightgray; /* Základní barva pozadí */
+  padding: 10px; /* Odsazení výsledků hledání */
+}
+
+.search-results li {
+  list-style: none; /* Odstraní odrážky */
+  margin: 5px 0; /* Odsazení mezi jednotlivými výsledky */
+  cursor: pointer; /* Ukazatel kurzoru jako tlačítko */
+}
+
+.search-results li:hover {
+  background-color: gray; /* Barva pozadí při najetí myší */
+  color: white; /* Barva textu při najetí myší */
+}

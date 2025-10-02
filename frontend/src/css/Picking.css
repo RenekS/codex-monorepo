@@ -1,0 +1,26 @@
+.picking-container {
+  margin: 20px;
+}
+
+.picking-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.picking-table th, .picking-table td {
+  border: 1px solid #ddd;
+  padding: 8px;
+  text-align: left;
+}
+
+.picking-table th {
+  background-color: #f2f2f2;
+}
+
+.picking-table tr:nth-child(even) {
+  background-color: #f9f9f9;
+}
+
+.picking-table tr:hover {
+  background-color: #ddd;
+}

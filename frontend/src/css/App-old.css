@@ -1,0 +1,219 @@
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+.content {
+    display: flex; /* Použije flexbox pro obsah pod hlavičkou */
+}
+
+
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px;
+  background-color: #f8f9fa;
+}
+.header-section {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.header-section.header-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start; /* Zarovná obsah vlevo */
+}
+.search-results {
+  background-color: lightgray; /* Základní barva pozadí */
+  padding: 10px; /* Odsazení výsledků hledání */
+}
+
+.search-results li {
+  list-style: none; /* Odstraní odrážky */
+  margin: 5px 0; /* Odsazení mezi jednotlivými výsledky */
+  cursor: pointer; /* Ukazatel kurzoru jako tlačítko */
+}
+
+.search-results li:hover {
+  background-color: gray; /* Barva pozadí při najetí myší */
+  color: white; /* Barva textu při najetí myší */
+}
+
+.input-group {
+  display: flex;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.input-group label {
+  margin-right: 10px;
+  white-space: nowrap;
+}
+
+.input-group input,
+.input-group select {
+  flex-grow: 1;
+}
+.main-content {
+  display: block;
+}
+
+
+
+.task-count-input {
+  width: 80px;  /* Nastavuje šířku textového pole */
+  margin: 0 10px; /* Přidává okraj kolem textového pole */
+  text-align: center; /* Centruje text v poli */
+}
+
+/* Styl pro pneumatiky */
+.tire-row {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 10px; /* Odděluje řádky pneumatik */
+}
+
+.tire-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-right: 10px; /* Odděluje sloupce pneumatik */
+}
+
+.tire-button {
+  background-color: #f0f0f0; /* Základní barva tlačítka */
+  border: 1px solid #ccc;
+  border-radius: 5px; /* Zaoblené rohy */
+  margin-bottom: 5px; /* Odděluje tlačítka ve sloupci */
+  cursor: pointer; /* Ukazatel kurzoru jako tlačítko */
+  font-size: 14px; /* Velikost písma */
+  width: 60px; /* Pevná šířka tlačítka */
+  height: 80px; /* Pevná výška tlačítka */
+  display: flex; /* Flexbox pro zarovnání obsahu */
+  justify-content: space-between; /* Horizontální zarovnání */
+  align-items: center; /* Vertikální zarovnání */
+  text-align: center; /* Zarovnání textu na střed */
+  padding: 10px; /* Přidejte padding pro větší prostor v tlačítku */
+  font-size: 1em; /* Zvětšete velikost písma tlačítka */
+  min-height: 60px;
+  overflow: hidden; /* Skryje přetečený obsah */
+  white-space: nowrap; /* Zabrání zalamování textu */
+  width: 100%;
+}
+.button-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+
+.sensor-data-inside-button {
+  text-align: left;
+  font-size: 0.8em; /* přizpůsobte velikost textu podle potřeby */
+}
+
+.tire-label {
+  font-weight: bold; /* Zvýrazněte název pneumatiky */
+  font-size: 1.2em; /* Zvětšete velikost písma názvu */
+  margin-right: 10px; /* Přidejte pravý margin pro oddělení od dat */
+}
+
+.pressure-20 {
+  color: red; /* Barva pro hodnotu Pressure20 */
+}
+
+.tire-button.active {
+  background-color: green; /* nebo jiná barva podle vašeho výběru */
+}
+
+
+
+.context-menu {
+  border: 2px solid red; /* viditelný rámeček pro testování */
+  background-color: white;
+  position: absolute;
+  z-index: 1000;
+  /* ...další styly... */
+}
+
+.context-menu ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.context-menu ul li {
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+.context-menu ul li:hover {
+  background-color: #eee;
+}
+
+
+
+/* Zvýraznění tlačítka pro rozbalení sidebaru */
+.nav-link[data-widget="pushmenu"] {
+  background-color: #007bff; /* Modrá barva pozadí */
+  color: white; /* Bílá barva ikony */
+  border-radius: 3px; /* Zaoblené rohy */
+  padding: 5px 10px; /* Vnitřní odsazení */
+  transition: background-color 0.3s ease; /* Plynulá změna pozadí */
+}
+
+.nav-link[data-widget="pushmenu"]:hover {
+  background-color: #0056b3; /* Tmavší modrá při najetí myši */
+}
+.main-header {
+  width: 100%;
+  z-index: 1020; /* Ujistěte se, že hlavička je nad ostatními prvky */
+}
+
+
+.main-sidebar {
+  /* Toto zůstává stejné, pokud chcete, aby sidebar byl viditelný pod hlavičkou */
+  flex: 0 0 250px;
+  height: calc(100vh - 56px); /* Přizpůsobte výšku, pokud má hlavička jinou výšku */
+  overflow-y: auto;
+}
+
+.card-ukony-servisu {
+  max-width: 500px; 
+}
+.custom-flex-card {
+    flex: 1; /* Nastaví prvek tak, aby zabral dostupný prostor */
+    max-width: 100%; /* Umožňuje prveku rozšířit se na maximální dostupnou šířku */
+}
+
+
+
+
+.count-control {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 5px; /* Přidává prostor mezi prvky */
+}
+
+.count-btn {
+  padding: 0.375rem 0.75rem; /* Standardní padding pro Bootstrap tlačítka */
+  font-size: 1rem; /* Standardní velikost fontu */
+  line-height: 1.5; /* Standardní výška řádku */
+  border-radius: 0.25rem; /* Zaoblené rohy */
+  height: calc(2.375rem + 2px); /* Výška odpovídající vstupnímu poli */
+  width: 50px;
+}
+
+.task-count-input {
+  width: 50px; /* Nastavuje pevnou šířku na 50px */
+  text-align: center;
+  height: calc(2.375rem + 2px); /* Můžete ponechat pro konzistentní výšku s tlačítky */
+  margin: 0 10px; /* Ponechejte, pokud chcete zachovat okraje */
+  flex: none; /* Zabrání flex roztahování */
+}
+
+
