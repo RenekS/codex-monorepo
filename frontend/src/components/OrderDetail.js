@@ -1,22 +1,35 @@
 // src/components/OrderDetail.jsx
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Box, CircularProgress } from '@mui/material';
+import {
+  Box,
+  CircularProgress,
+  Button,
+  Typography,
+  Switch,
+  FormControlLabel,
+  Paper,
+  CircularProgress as MCircularProgress
+} from '@mui/material';
+import FullscreenIcon from '@mui/icons-material/Fullscreen';
+import RefreshIcon from '@mui/icons-material/Refresh';
 
 import successSoundFile from '../sounds/success-sound.mp3';
 import errorSoundFile from '../sounds/error-sound.mp3';
 import useBarcodeScanner from '../hooks/useBarcodeScanner';
 
-import { s, normSlots } from '../utils/qr';
+import { s, normSlots, parseQrPayload } from '../utils/qr';
 import { playSound } from '../utils/sound';
 import useIssue from '../hooks/useIssue';
 import useOrderScanRouter from '../hooks/useOrderScanRouter';
 import {
   getPickedOrders,
   getOrderDetail as apiGetOrderDetail,
-  postPicked,
+  postEnsureIssue,
+  postIssueLine,
   getPickedItems,
-  deletePickedItems
+  deletePickedItems,
+  resolveCarton
 } from '../services/wmsApi';
 
 import OrderSummary from './OrderSummary';
@@ -26,19 +39,7 @@ import CompleteModal from './CompleteModal';
 // ScanModal odstraněn
 import PickedItemsModal from './PickedItemsModal';
 import StartCompletionPrompt from './StartCompletionPrompt';
-import {
-  Box as MBox,
-  Button,
-  Typography,
-  Switch,
-  FormControlLabel,
-  Paper,
-  CircularProgress as MCircularProgress
-} from '@mui/material';
-import {
-  Fullscreen as FullscreenIcon,
-  Refresh as RefreshIcon
-} from '@mui/icons-material';
+import CartonPickerModal from './CartonPickerModal';
 
 export default function OrderDetail() {
   const { orderNumber } = useParams();
@@ -61,6 +62,10 @@ export default function OrderDetail() {
   const [completeMode, setCompleteMode] = useState(false);
   const [completeIndex, setCompleteIndex] = useState(0);
   const [loading, setLoading] = useState(false);
+
+  // Úprava po skenu + manuální výběr krabice
+  const [adjustCtx, setAdjustCtx] = useState(null); // { itemId, unit: 'pouch'|'piece', qty: number }
+  const [cartonPickerOpen, setCartonPickerOpen] = useState(false);
 
   // řízený režim kompletace
   const [pickMode, setPickMode] = useState('auto'); // 'auto' | 'awaitingCarton' | 'partialForCarton'
@@ -206,17 +211,21 @@ export default function OrderDetail() {
     return null;
   };
 
-  const findItemByCartonCode = (code) => {
-    if (!code) return null;
-    const parts = String(code).split('-');
-    const maybeCode = parts.length >= 2 ? parts[1] : null; // ItsItemName2 bývá druhá část
-    if (maybeCode) {
-      const hit = items.find(it => s(it.ItsItemName2) === s(maybeCode));
-      if (hit) return hit;
+  // === asynchronní mapování carton_code -> produkt přes backend ===
+  const findItemByCartonCode = async (code) => {
+    try {
+      if (!code) return null;
+      const r = await resolveCarton(orderNumber, String(code));
+      const pid = s(r.product_code || r.product_id || '');
+      if (!pid) return null;
+
+      const itemsArr = (orderDetail?.Items || items || []);
+      const hit = itemsArr.find(it => s(it.ItsItemName2) === pid || s(it.Product_Id) === pid);
+      return hit || null;
+    } catch (e) {
+      console.error('resolveCarton error', e);
+      return null;
     }
-    // fallbacky
-    const hit2 = items.find(it => code.includes(s(it.ItemId)) || code.includes(s(it.Product_Id)));
-    return hit2 || null;
   };
 
   const buildPostPayload = (itemId, pickedVal, slotName, extra = {}) => {
@@ -233,16 +242,44 @@ export default function OrderDetail() {
     };
   };
 
-  // === UPRAVA: explicitní 'operationType' + ledger pro kontrolu ===
+  // Bezpečný getter issueId – když není, zajistí přes ensureIssue()
+  const getIssueIdSafe = async () => {
+    if (issueId) return issueId;
+    try {
+      const r = await ensureIssue();
+      return r?.issueId ?? r?.id ?? r?.IssueId ?? issueId ?? null;
+    } catch {
+      return issueId ?? null;
+    }
+  };
+
+  // === zápisy (pick/control) — přes WH_IssueItems ===
   const updatePackageCount = async (itemId, newCount, maxQty, slotName = null, opts = {}) => {
+    const prevVal = packageCounts[itemId] || 0;
+    const delta   = newCount - prevVal;
+
     setPackageCounts(prev => ({ ...prev, [itemId]: newCount }));
     playSound(newCount > maxQty ? errorAudio : successAudio);
+
     try {
-      const payload = buildPostPayload(itemId, newCount, slotName, opts);
-      payload.operationType = 'pick'; // pro čitelnost, backend má default
-      await postPicked(orderNumber, payload);
+      if (delta !== 0) {
+        const iid = await getIssueIdSafe();
+        if (!iid) { console.warn('Chybí issueId → zápis přeskočen'); return; }
+
+        const productId = productKeyByItemIdRef.current.get(itemId) || String(itemId);
+        const cartonCode = opts.cartonCode || (pendingCarton ? String(pendingCarton) : null);
+        const slot = slotName || (items.find(i => i.ItemId === itemId)?.slot_first) || null;
+
+        await postIssueLine(iid, {
+          productId,
+          deltaUnits: delta,              // může být i záporné (oprava)
+          slotName: slot,
+          cartonCode,
+          operationType: 'pick'
+        });
+      }
     } catch (err) {
-      console.error('Chyba při ukládání pick count:', err);
+      console.error('Chyba při zápisu do WH_IssueItems:', err);
     }
   };
 
@@ -254,26 +291,21 @@ export default function OrderDetail() {
     playSound(newCount > maxQty ? errorAudio : successAudio);
 
     try {
-      // 1) absolutní stav do Orders_raw (jako dosud)
-      const payload = buildPostPayload(itemId, packageCounts[itemId], slotName, opts);
-      payload.controlQty = newCount;
-      payload.operationType = 'control';
-      await postPicked(orderNumber, payload);
+      if (deltaCtrl !== 0) {
+        const iid = await getIssueIdSafe();
+        if (!iid) { console.warn('Chybí issueId → zápis přeskočen'); return; }
 
-      // 2) ledger delta do WH_IssueItems (operation_type='control', backend si případný overpick určí sám)
-      if (deltaCtrl !== 0 && issueId) {
         const productId = productKeyByItemIdRef.current.get(itemId) || String(itemId);
-        await fetch(`/wms/issues/${issueId}/line`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            productId,
-            deltaUnits: deltaCtrl,                 // může být i záporné (oprava)
-            slotName: slotName || null,
-            cartonCode: opts.cartonCode || null,
-            operationType: 'control',
-          }),
-        }).catch(e => console.error('Ledger control insert error:', e));
+        const cartonCode = opts.cartonCode || (pendingCarton ? String(pendingCarton) : null);
+        const slot = slotName || (items.find(i => i.ItemId === itemId)?.slot_first) || null;
+
+        await postIssueLine(iid, {
+          productId,
+          deltaUnits: deltaCtrl,                 // může být i záporné (oprava)
+          slotName: slot,
+          cartonCode,
+          operationType: 'control',
+        });
       }
     } catch (err) {
       console.error('Chyba při ukládání kontroly:', err);
@@ -287,11 +319,13 @@ export default function OrderDetail() {
   const handlePadSubmit = n => {
     if (controlMode) {
       const it = items.find(i => i.ItemId === editingControl);
-      updateControlCount(editingControl, n, it?.SalesQty ?? n, it?.slot_first || null);
+      const extra = pendingCarton ? { cartonCode: String(pendingCarton) } : {};
+      updateControlCount(editingControl, n, it?.SalesQty ?? n, it?.slot_first || null, extra);
       setEditingControl(null);
     } else {
       const it = items.find(i => i.ItemId === editingPackage);
-      updatePackageCount(editingPackage, n, it?.SalesQty ?? n, it?.slot_first || null);
+      const extra = pendingCarton ? { cartonCode: String(pendingCarton) } : {};
+      updatePackageCount(editingPackage, n, it?.SalesQty ?? n, it?.slot_first || null, extra);
       setEditingPackage(null);
     }
   };
@@ -299,10 +333,13 @@ export default function OrderDetail() {
     setEditingPackage(null);
     setEditingControl(null);
   };
-  const handleDoubleClick = (id, maxQty) =>
-    controlMode
-      ? updateControlCount(id, (controlCounts[id] || 0) === maxQty ? 0 : maxQty, maxQty)
-      : updatePackageCount(id, (packageCounts[id] || 0) === maxQty ? 0 : maxQty, maxQty);
+  const handleDoubleClick = (id, maxQty) => {
+    const extra = pendingCarton ? { cartonCode: String(pendingCarton) } : {};
+    const slot = (items.find(i => i.ItemId === id)?.slot_first) || null;
+    return controlMode
+      ? updateControlCount(id, (controlCounts[id] || 0) === maxQty ? 0 : maxQty, maxQty, slot, extra)
+      : updatePackageCount(id, (packageCounts[id] || 0) === maxQty ? 0 : maxQty, maxQty, slot, extra);
+  };
 
   // odebrání naskenovaných položek (existující flow)
   const openRemovePickedModal = async (itemId) => {
@@ -374,7 +411,9 @@ export default function OrderDetail() {
     if (!controlMode) openRemovePickedModal(item.ItemId);
   };
   const onPlusClick = (item) => {
-    if (!controlMode) openCompletionForItem(item.ItemId);
+    if (!controlMode) {
+      setCartonPickerOpen(true);
+    }
   };
 
   const onStartComplete = async () => {
@@ -401,9 +440,10 @@ export default function OrderDetail() {
     return Math.max(0, target - current);
   };
 
-  // skener
-  const onScan = useOrderScanRouter({
+  // skener – zapnutý i v modalu (vypíná se jen picker krabic)
+  const baseOnScan = useOrderScanRouter({
     completeMode,
+    orderNumber, // pro /resolve
     getCurrentCompletionItem,
     findItemByCartonCode,
     ensureIssue,
@@ -427,8 +467,53 @@ export default function OrderDetail() {
     pendingCarton,
     setPendingCarton,
     getRemainingForItem,
+    setAdjustCtx
   });
-  useBarcodeScanner(onScan);
+
+  // Wrapper: implicitní režimy (mimo kompletaci = přímý; v kompletaci = řízený)
+  const onScan = async (code) => {
+    try {
+      const str = String(code || '');
+      const qr = parseQrPayload(str);
+
+      // === PŘÍMÝ REŽIM: sken krabice ===
+      if (qr && (qr.cartonCode || qr.carton_code)) {
+        const rawCarton = qr.cartonCode || qr.carton_code;
+        const it = await findItemByCartonCode(rawCarton);
+        if (it) {
+          // předvyplň krabici a qty z /resolve
+          setPendingCarton(String(rawCarton));
+          try {
+            const r = await resolveCarton(orderNumber, String(rawCarton));
+            const q = Number(r?.qty || 0);
+            setAdjustCtx({ itemId: it.ItemId, unit: 'pouch', qty: q > 0 ? q : 0 });
+          } catch {
+            setAdjustCtx({ itemId: it.ItemId, unit: 'pouch', qty: 0 });
+          }
+
+          // otevři modal bez dotazů, přímý režim
+          setPickMode('direct');
+          setStartPromptOpen(false);
+          if (!completeMode) setCompleteMode(true);
+
+          const idxA = incompleteItems.findIndex(x => x.ItemId === it.ItemId);
+          const idxB = sortedItems.findIndex(x => x.ItemId === it.ItemId);
+          setCompleteIndex(idxA >= 0 ? idxA : (idxB >= 0 ? idxB : 0));
+          setFocusedItemId(it.ItemId);
+          return;
+        }
+      }
+
+      // fallback (EAN apod.)
+      await baseOnScan(code);
+    } catch (e) {
+      console.error('onScan error', e);
+      try { await baseOnScan(code); } catch {}
+    }
+  };
+
+  // Pozastav čtečku jen v pickeru (skener aktivní i v modalu)
+  useBarcodeScanner(onScan, { enabled: !cartonPickerOpen });
 
   // ✨ LOCK: drž aktuální položku, dokud není kompletní
   useEffect(() => {
@@ -476,7 +561,7 @@ export default function OrderDetail() {
     <>
       <Box sx={{ p: 2 }}>
         {/* toolbar */}
-        <MBox sx={{ display: 'flex', gap: 2, mb: 2, flexWrap: 'wrap', alignItems: 'center' }}>
+        <Box sx={{ display: 'flex', gap: 2, mb: 2, flexWrap: 'wrap', alignItems: 'center' }}>
           <FormControlLabel
             control={
               <Switch
@@ -490,6 +575,7 @@ export default function OrderDetail() {
           />
           <Button onClick={goPrev} disabled={!isPicked}>Předchozí</Button>
           <Button onClick={goNext} disabled={!isPicked}>Další</Button>
+
           <Button
             variant="contained"
             onClick={onStartComplete}
@@ -497,6 +583,7 @@ export default function OrderDetail() {
           >
             Kompletovat
           </Button>
+
           {issueDocNo && (
             <Typography variant="body2" sx={{ opacity: 0.8 }}>
               Výdejka: {issueDocNo}
@@ -507,7 +594,7 @@ export default function OrderDetail() {
             <RefreshIcon />
             {loading && <MCircularProgress size={18} sx={{ ml: 1 }} />}
           </Button>
-        </MBox>
+        </Box>
 
         <Typography variant="h4" sx={{ mb: 2 }}>Objednávka č. {orderDetail.orderNumber}</Typography>
 
@@ -553,22 +640,62 @@ export default function OrderDetail() {
 
       {/* ScanModal odstraněn */}
 
+      <CartonPickerModal
+        open={cartonPickerOpen}
+        onClose={() => setCartonPickerOpen(false)}
+        onConfirm={async (code) => {
+          const it = await findItemByCartonCode(code);
+          if (it) {
+            setPendingCarton(String(code));
+            setAdjustCtx({ itemId: it.ItemId, unit: 'pouch', qty: 1 });
+            setCartonPickerOpen(false);
+            if (!completeMode) {
+              await openCompletionForItem(it.ItemId);
+            } else {
+              const idx = incompleteItems.findIndex(x => x.ItemId === it.ItemId);
+              if (idx >= 0) setCompleteIndex(idx);
+              setFocusedItemId(it.ItemId);
+            }
+          } else {
+            alert('Krabice neodpovídá žádnému produktu v této objednávce.');
+          }
+        }}
+      />
+
       <CompleteModal
         open={completeMode}
         onClose={() => setCompleteMode(false)}
         incompleteItems={incompleteItems}
         completeIndex={completeIndex}
-        setCompleteIndex={setCompleteIndexLocked} 
+        setCompleteIndex={setCompleteIndexLocked}
         controlMode={controlMode}
         packageCounts={packageCounts}
         controlCounts={controlCounts}
         updatePackageCount={updatePackageCount}
         updateControlCount={updateControlCount}
 
-        // nové props
+        // panel po skenu
         pickMode={pickMode}
         pendingCarton={pendingCarton}
         remainingForItem={getRemainingForItem}
+        adjustCtx={adjustCtx}
+        setAdjustCtx={setAdjustCtx}
+        onAfterAdjustConfirm={({ advance }) => {
+          setPendingCarton(null);
+          setAdjustCtx(null);
+
+          if (!completeMode) {
+            setCompleteMode(false);
+            return;
+          }
+          if (advance) {
+            const yes = window.confirm('Produkt napickován kompletně. Přejít na další?');
+            if (yes) {
+              setCompleteIndex(i => Math.min(i + 1, Math.max(0, (incompleteItems.length - 1))));
+            }
+          }
+        }}
+
         onManualPieces={async (itemId, pcs) => {
           const it = items.find(i => i.ItemId === itemId);
           if (!it) return;
@@ -599,7 +726,7 @@ export default function OrderDetail() {
       />
 
       <StartCompletionPrompt
-        open={startPromptOpen}
+        open={false}
         onCancel={() => setStartPromptOpen(false)}
         onStart={async () => {
           setStartPromptOpen(false);
@@ -610,7 +737,6 @@ export default function OrderDetail() {
             setCompleteMode(true);
             setPickMode('auto');
             setPendingCarton(null);
-            // ✨ fokus na aktuální položku v seznamu
             const cur = incompleteItems[completeIndex];
             setFocusedItemId(cur?.ItemId ?? incompleteItems[0]?.ItemId ?? null);
           }

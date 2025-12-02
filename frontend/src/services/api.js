@@ -41,3 +41,6 @@ export async function reassignToUnassignedAPI(guard, body) {
 export async function patchQtyAPI(guard, measurementId, qty) {
   return guard(api.patch(`/api/measurement/${measurementId}/qty`, { qty: Number(qty || 0) }));
 }
+export const resolveCarton = async (orderNumber, cartonCode) => (
+  await api.get('/wms/carton/resolve', { params: { order_number: orderNumber, carton_code: cartonCode } })
+).data;

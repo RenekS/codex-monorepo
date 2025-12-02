@@ -2,6 +2,7 @@
 // File: src/components/InitialInventory.jsx (container)
 // =============================================================
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { extractGs1Gtin } from '../utils/qr';
 import { useNavigate } from 'react-router-dom';
 import { PREVIEW_PREFIX } from '../constants/inventory';
 import {
@@ -572,7 +573,9 @@ export default function InitialInventory() {
             }
           }
         }
-        if (!printed) {
+        // always also print temporary EAN-mapped that weren't in created
+        {
+          const printedCodes = new Set((Array.isArray(created) ? created : []).map(r => (typeof r === 'string' ? r : (r.carton_code || r.code))).filter(Boolean));
           const eanCreated = scannedRows
             .filter(r => r.kind === 'ean_mapped' && r.preview_carton_code)
             .map(r => ({
@@ -587,8 +590,9 @@ export default function InitialInventory() {
                   ? parseInt(r.preview_carton_code.match(/(\d+)\s*$/)[1], 10)
                   : null)
             }));
-          if (eanCreated.length) {
-            try { await printCreatedLabels(eanCreated); }
+          const eanToPrint = eanCreated.filter(x => x && x.carton_code && !printedCodes.has(x.carton_code));
+          if (eanToPrint.length) {
+            try { await printCreatedLabels(eanToPrint); }
             catch (e) { console.error('Fallback tisk selhal:', e); }
           }
         }

@@ -2640,28 +2640,10 @@ async function nextCartonCode(conn, headerId, product_code) {
 // Resolve carton_code -> produkt (a vazby) pro aktuální objednávku
 // ✅ server.js — nahraď tímto celý endpoint /wms/carton/resolve
 app.get('/wms/carton/resolve', async (req, res) => {
-  // inline parser: vytáhne carton_code z ?carton_code= nebo z GS1 DL (?91=)
-  const extractCarton = (rawCode, rawCarton) => {
-    const s = (v) => (v == null ? '' : String(v)).trim();
-    const carton = s(rawCarton);
-    if (carton) return carton;
-    const code = s(rawCode);
-    if (!code) return '';
-    try {
-      const u = new URL(code, 'http://x'); // base pro relative
-      const ai91 = u.searchParams.get('91');
-      if (ai91) return ai91.trim();
-    } catch(_) {}
-    // fallback: ruční parsování query ?91=
-    const m = code.match(/[?&]91=([^&#]+)/);
-    if (m) return decodeURIComponent(m[1]).trim();
-    return '';
-  };
-
   try {
-    const cartonCode = extractCarton(req.query.code, req.query.carton_code);
+    const code = String(req.query.carton_code || '').trim();
     const orderNumber = String(req.query.order_number || '').trim();
-    if (!cartonCode) return res.status(400).json({ ok: false, error: 'carton_code is required.' });
+    if (!code) return res.status(400).json({ ok: false, error: 'carton_code is required.' });
 
     const rows = await dbQuery(
       poolC5sluzbyint,
@@ -2669,38 +2651,35 @@ app.get('/wms/carton/resolve', async (req, res) => {
          m.id              AS measurement_id,
          m.carton_code,
          m.pallet_slot_id  AS slot_id_from,
-         COALESCE(m.qty,0) AS qty,
          l.item_number     AS product_code,
          oraw.Product_Id   AS product_id
        FROM NP_Measurements m
        LEFT JOIN NP_Lines l 
-              ON l.id = m.line_id
+         ON l.id = m.line_id
        LEFT JOIN Orders_raw oraw
-              ON oraw.Order_Number = ? 
-             AND (oraw.ItsItemName2 = l.item_number OR oraw.Product_Id = l.item_number)
+         ON oraw.Order_Number = ?
+        AND (oraw.Product_Id = l.item_number OR oraw.ItsItemName2 = l.item_number)
        WHERE m.carton_code = ?
-       ORDER BY m.id DESC
        LIMIT 1`,
-      [orderNumber || null, cartonCode]
+      [orderNumber || null, code]
     );
 
-    if (!rows.length) return res.status(404).json({ ok: false, error: 'Krabice nenalezena.' });
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(404).json({ ok: false, error: 'Carton not found.' });
+    }
     const r = rows[0];
     return res.json({
       ok: true,
-      measurement_id: r.measurement_id,
-      carton_code: r.carton_code,
-      slot_id_from: r.slot_id_from,
-      product_code: r.product_code,
-      product_id: r.product_id,
-      qty: Number(r.qty || 0)
+      measurement_id: Number(r.measurement_id),
+      slot_id_from: r.slot_id_from != null ? Number(r.slot_id_from) : null,
+      product_code: String(r.product_code || r.product_id || ''),
+      product_id: String(r.product_id || '')
     });
-  } catch (e) {
-    console.error('[/wms/carton/resolve] error', e);
-    return res.status(500).json({ ok: false, error: e.message || 'Server error' });
+  } catch (err) {
+    console.error('ERR GET /wms/carton/resolve', err);
+    return res.status(500).json({ ok: false, error: err.message || 'Server error' });
   }
 });
-
 
 
 // PATCH /api/measurement/:id/qty
@@ -3454,68 +3433,69 @@ app.post('/wms/issues/:issueId/line', async (req, res) => {
   try {
     const issueId = parseInt(req.params.issueId, 10);
     if (!Number.isInteger(issueId) || issueId <= 0) {
-      return res.status(400).json({ ok:false, error:'Neplatné issueId.' });
+      return res.status(400).json({ ok: false, error: 'Neplatné issueId.' });
     }
-    const { productId, deltaUnits, cartonCode, operationType='pick' } = req.body || {};
-    if (!productId) return res.status(400).json({ ok:false, error:'productId je povinné.' });
-    if (typeof deltaUnits !== 'number' || !Number.isFinite(deltaUnits) || deltaUnits === 0) {
-      return res.status(400).json({ ok:false, error:'deltaUnits musí být nenulové číslo.' });
+    const {
+      productId,
+      deltaUnits,
+      slotName = null,
+      cartonCode = null,
+      operationType = 'pick'
+    } = req.body || {};
+
+    if (!productId) return res.status(400).json({ ok: false, error: 'productId je povinné.' });
+    if (typeof deltaUnits !== 'number' || Number.isNaN(deltaUnits) || deltaUnits === 0) {
+      return res.status(400).json({ ok: false, error: 'deltaUnits musí být nenulové číslo.' });
     }
-    const carton = String(cartonCode || '').trim();
-    if (!carton) return res.status(400).json({ ok:false, error:'cartonCode je povinné (musíš skenovat krabici).' });
 
-    let conn;
-    try {
-      conn = await getConn(poolC5sluzbyint);
-      await begin(conn);
+    // zjisti order_number (pro budoucí validace)
+    const hdr = await q(poolC5sluzbyint, `SELECT id, order_number, status FROM WH_Issues WHERE id=?`, [issueId]);
+    if (!hdr.length) return res.status(404).json({ ok: false, error: 'Hlavička výdejky nenalezena.' });
+    if (hdr[0].status !== 'open') return res.status(400).json({ ok: false, error: 'Výdejka není v otevřeném stavu.' });
 
-      const hdr = await exec(conn, `SELECT id, status FROM WH_Issues WHERE id=? LIMIT 1`, [issueId]);
-      if (!hdr.length) { await rollback(conn); return res.status(404).json({ ok:false, error:'Výdejka nenalezena.' }); }
-      if (hdr[0].status !== 'open') { await rollback(conn); return res.status(400).json({ ok:false, error:'Výdejka není open.' }); }
-
-      // Najdi krabici (measurement + slot)
-      const m = await exec(conn,
-        `SELECT id AS measurement_id, pallet_slot_id AS slot_id, COALESCE(qty,0) AS qty, carton_code
-           FROM NP_Measurements WHERE carton_code = ? LIMIT 1`, [carton]);
-      if (!m.length) { await rollback(conn); return res.status(404).json({ ok:false, error:'Krabice (carton_code) nenalezena.' }); }
-      const measurementId = m[0].measurement_id;
-      const slotIdFrom    = Number(m[0].slot_id) || 0;
-      const cartonFinal   = String(m[0].carton_code || carton);
-
-      // line_no
-      const ln = await exec(conn, `SELECT COALESCE(MAX(line_no),0)+10 AS ln FROM WH_IssueItems WHERE issue_id=?`, [issueId]);
-      const lineNo = Number(ln?.[0]?.ln || 10);
-
-      await exec(conn,
-        `INSERT INTO WH_IssueItems
-           (issue_id, line_no, product_id, slot_id_from, carton_code, measurement_id,
-            qty_units, qty_cartons, qty_sachets, operation_type)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?)` ,
-        [issueId, lineNo, String(productId), slotIdFrom, cartonFinal, measurementId, Number(deltaUnits), String(operationType)]
-      );
-
-      // Pohyb zásoby jen pro PICK
-      if (operationType === 'pick') {
-        if (deltaUnits > 0) {
-          await exec(conn, `UPDATE NP_Measurements SET qty = GREATEST(COALESCE(qty,0) - ?, 0) WHERE id = ?`, [Number(deltaUnits), measurementId]);
-        } else if (deltaUnits < 0) {
-          await exec(conn, `UPDATE NP_Measurements SET qty = COALESCE(qty,0) + ? WHERE id = ?`, [Math.abs(Number(deltaUnits)), measurementId]);
-        }
+    // volitelně navázat cartonCode -> measurement/slot
+    let measurementId = null;
+    let slotIdFrom = null;
+    if (cartonCode) {
+      const m = await q(poolC5sluzbyint, `
+        SELECT m.id AS measurement_id, m.pallet_slot_id AS slot_id
+        FROM NP_Measurements m
+        WHERE m.carton_code = ?
+        LIMIT 1
+      `, [cartonCode]);
+      if (m.length) {
+        measurementId = m[0].measurement_id || null;
+        slotIdFrom = m[0].slot_id || null;
       }
-
-      await commit(conn);
-      return res.json({ ok:true, issueId, productId, deltaUnits, operationType, carton_code: cartonFinal, slot_id_from: slotIdFrom });
-    } catch (err) {
-      try { if (conn) await rollback(conn); } catch {}
-      throw err;
-    } finally {
-      if (conn) conn.release?.();
     }
+
+    const nextLine = await q(poolC5sluzbyint, `
+      SELECT COALESCE(MAX(line_no),0)+10 AS ln FROM WH_IssueItems WHERE issue_id=?`,
+      [issueId]
+    );
+
+    await q(poolC5sluzbyint, `
+      INSERT INTO WH_IssueItems
+        (issue_id, line_no, product_id, slot_id_from, carton_code, measurement_id, qty_units, qty_cartons, qty_sachets, operation_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?)`,
+      [issueId, Number(nextLine[0].ln || 10), String(productId), slotIdFrom, cartonCode || null, measurementId, deltaUnits, operationType]
+    );
+
+    if (slotName) {
+      await q(poolC5sluzbyint, `
+        UPDATE Orders_raw SET Position = ?
+        WHERE Order_Number = ? AND Product_Id = ?`,
+        [slotName, hdr[0].order_number, productId]
+      );
+    }
+
+    return res.json({ ok: true, issueId, productId, deltaUnits, operationType });
   } catch (err) {
     console.error('ERR POST /wms/issues/:issueId/line', err);
-    return res.status(500).json({ ok:false, error: err.message || 'Server error' });
+    return res.status(500).json({ ok: false, error: err.message || 'Server error' });
   }
 });
+
 
 /**
  * POST /wms/issues/:issueId/save
@@ -3574,11 +3554,11 @@ app.post('/wms/issues/:issueId/post', async (req, res) => {
 app.post('/wms/order/:orderNumber/picked', async (req, res) => {
   const orderNumber = String(req.params.orderNumber || '').trim();
   const body = req.body || {};
-  const product_code = (body.product_code ?? body.productId ?? '').trim(); // očekáváme ITS klíč
+  const product_code = (body.product_code ?? body.productId ?? '').trim();
   const item_id      = (body.item_id ?? '').trim();
   const slotName     = body.slotName ?? null;
   const pickedQty    = Number(body.pickedQty);
-  const controlQty   = (body.controlQty == null ? null : Number(body.controlQty));
+  const controlQty   = body.controlQty ?? null;
   const issueIdBody  = body.issueId ?? null;
   const cartonCode   = body.cartonCode ?? null;
   let operationType  = body.operationType || 'pick';
@@ -3592,108 +3572,127 @@ app.post('/wms/order/:orderNumber/picked', async (req, res) => {
     conn = await getConn(poolC5sluzbyint);
     await begin(conn);
 
-    const map = await exec(conn,
-      `SELECT Product_Id AS ax, ItsItemName2 AS its, Product_Picked AS prevPicked, COALESCE(Product_Picked_Check,0) AS prevControl
-         FROM Orders_raw
-        WHERE Order_Number = ? AND (Product_Id = ? OR ItsItemName2 = ?)
-        LIMIT 1`,
-      [orderNumber, product_code, product_code]
-    );
-    if (!map.length) {
-      await rollback(conn);
-      return res.status(404).json({ success: false, error: 'Položka není v Orders_raw pro danou objednávku.' });
-    }
-    const its = String(map[0].its || '').trim();
-    const ax  = String(map[0].ax  || '').trim();
-    const prevPicked  = Number(map[0].prevPicked || 0);
-    const prevControl = Number(map[0].prevControl || 0);
-    if (!its || !ax) {
-      await rollback(conn);
-      return res.status(404).json({ success: false, error: 'Chybí ITS/AX mapování v Orders_raw.' });
-    }
-
-    let deltaUnits = 0;
-    if (operationType === 'control') {
-      if (controlQty == null || Number.isNaN(controlQty)) {
-        await rollback(conn);
-        return res.status(400).json({ success: false, error: 'Pro control je nutné dodat controlQty.' });
-      }
-      deltaUnits = Number(controlQty) - prevControl;
-    } else {
-      deltaUnits = Number(pickedQty) - prevPicked;
-    }
-    if (!Number.isFinite(deltaUnits) || deltaUnits === 0) {
-      await commit(conn);
-      return res.json({ success: true, orderNumber, item: { ax, its }, deltaUnits: 0, operationType });
-    }
-
-    let issueId = null;
-    if (issueIdBody) {
-      const r = await exec(conn, `SELECT id FROM WH_Issues WHERE id=? AND status='open' LIMIT 1`, [issueIdBody]);
-      if (r.length) issueId = issueIdBody;
-    }
-    if (!issueId) {
-      const open = await exec(conn, `SELECT id FROM WH_Issues WHERE order_number=? AND status='open' ORDER BY id DESC LIMIT 1`, [orderNumber]);
-      if (open.length) issueId = open[0].id;
-      else {
-        const ins = await exec(conn, `INSERT INTO WH_Issues (doc_no, status, order_number) VALUES (NULL, 'open', ?)`, [orderNumber]);
-        issueId = ins.insertId;
-        await exec(conn, `UPDATE WH_Issues SET doc_no = CONCAT('ISS-', DATE_FORMAT(NOW(), '%Y%m%d'), '-', LPAD(?, 6, '0')) WHERE id=?`, [issueId, issueId]);
-      }
-    }
-
-    let measurementId = null;
-    let slotIdFrom = null;
-    if (cartonCode) {
-      const m = await exec(conn,
-        `SELECT id AS measurement_id, pallet_slot_id AS slot_id FROM NP_Measurements WHERE carton_code = ? LIMIT 1`,
-        [cartonCode]
+    // 1) Najdi Orders_raw (pro productIdRaw a prevPicked)
+    let productIdRaw = null;
+    let prevPicked = 0;
+    if (item_id) {
+      const r = await exec(conn,
+        `SELECT r.Product_Picked, r.Product_Id
+           FROM Orders_raw r
+          WHERE r.Order_Number = ? AND r.Product_Id = ?
+          FOR UPDATE`,
+        [orderNumber, item_id]
       );
-      if (m.length) {
-        measurementId = m[0].measurement_id;
-        slotIdFrom    = m[0].slot_id;
+      if (r && r.length) {
+        productIdRaw = String(r[0].Product_Id);
+        prevPicked   = Number(r[0].Product_Picked || 0);
+      }
+    }
+    if (!productIdRaw) {
+      const j = await exec(conn,
+        `SELECT r.Product_Picked, r.Product_Id
+           FROM Orders_raw r
+           JOIN Tavinox_komplet t ON t.Kod_AX = r.Product_Id
+          WHERE r.Order_Number = ? AND t.Kod = ?
+          FOR UPDATE`,
+        [orderNumber, product_code]
+      );
+      if (j && j.length) {
+        productIdRaw = String(j[0].Product_Id);
+        prevPicked   = Number(j[0].Product_Picked || 0);
+      }
+    }
+    if (!productIdRaw) {
+      await rollback(conn);
+      return res.status(404).json({ success: false, error: 'Záznam v Orders_raw nenalezen.' });
+    }
+
+    const deltaUnits = pickedQty - prevPicked;
+
+    // 2) Najdi nebo založ OPEN issue
+    let issueId = Number(issueIdBody) || null;
+    if (!issueId) {
+      const found = await exec(conn,
+        `SELECT id FROM WH_Issues WHERE order_number = ? AND status = 'open' ORDER BY id DESC LIMIT 1`,
+        [orderNumber]
+      );
+      if (found && found.length) {
+        issueId = found[0].id;
+      } else {
+        const ins = await exec(conn,
+          `INSERT INTO WH_Issues (doc_no, status, order_number) VALUES (NULL, 'open', ?)`,
+          [orderNumber]
+        );
+        issueId = ins.insertId;
+        await exec(conn,
+          `UPDATE WH_Issues SET doc_no = CONCAT('ISS-', DATE_FORMAT(NOW(), '%Y%m%d'), '-', LPAD(?, 6, '0')) WHERE id = ?`,
+          [issueId, issueId]
+        );
       }
     }
 
-    const ln = await exec(conn, `SELECT COALESCE(MAX(line_no),0)+10 AS ln FROM WH_IssueItems WHERE issue_id=?`, [issueId]);
-    const lineNo = Number(ln?.[0]?.ln || 10);
-
-    await exec(conn,
-      `INSERT INTO WH_IssueItems
-         (issue_id, line_no, product_id, slot_id_from, carton_code, measurement_id,
-          qty_units, qty_cartons, qty_sachets, operation_type)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?)`,
-      [issueId, lineNo, its, slotIdFrom, cartonCode || null, measurementId, deltaUnits, operationType]
-    );
-
-    if (measurementId && operationType === 'pick') {
-      if (deltaUnits > 0) {
-        await exec(conn, `UPDATE NP_Measurements SET qty = GREATEST(COALESCE(qty,0) - ?, 0) WHERE id = ?`, [deltaUnits, measurementId]);
-      } else if (deltaUnits < 0) {
-        await exec(conn, `UPDATE NP_Measurements SET qty = COALESCE(qty,0) + ? WHERE id = ?`, [Math.abs(deltaUnits), measurementId]);
-      }
-    }
-
-    let newPicked = prevPicked;
-    let newControl = prevControl;
+    // 3) Detekce overpick při kontrolách
     if (operationType === 'control') {
-      newControl = Number(controlQty);
-    } else {
-      newPicked = Number(pickedQty);
-      if (newControl > newPicked) newControl = newPicked;
+      const pickedSum = await exec(conn,
+        `SELECT COALESCE(SUM(qty_units),0) AS sumPicked
+           FROM WH_IssueItems
+          WHERE issue_id=? AND product_id=? AND operation_type='pick'`,
+        [issueId, product_code]
+      );
+      const controlledSum = await exec(conn,
+        `SELECT COALESCE(SUM(qty_units),0) AS sumControlled
+           FROM WH_IssueItems
+          WHERE issue_id=? AND product_id=? AND operation_type='control'`,
+        [issueId, product_code]
+      );
+
+      const remaining = Number(pickedSum[0].sumPicked) - Number(controlledSum[0].sumControlled);
+      if (deltaUnits > remaining) {
+        operationType = 'overpick';
+      }
     }
 
+    // 4) Ledger do WH_IssueItems
+    if (deltaUnits !== 0) {
+      let measurementId = null;
+      let slotIdFrom = null;
+      if (cartonCode) {
+        const m = await exec(conn,
+          `SELECT id AS measurement_id, pallet_slot_id AS slot_id FROM NP_Measurements WHERE carton_code = ? LIMIT 1`,
+          [cartonCode]
+        );
+        if (m && m.length) {
+          measurementId = m[0].measurement_id;
+          slotIdFrom    = m[0].slot_id;
+        }
+      }
+      const ln = await exec(conn,
+        `SELECT COALESCE(MAX(line_no),0)+10 AS ln FROM WH_IssueItems WHERE issue_id=?`,
+        [issueId]
+      );
+      const lineNo = Number(ln?.[0]?.ln || 10);
+
+      await exec(conn,
+        `INSERT INTO WH_IssueItems
+           (issue_id, line_no, product_id, slot_id_from, carton_code, measurement_id,
+            qty_units, qty_cartons, qty_sachets, operation_type)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?)`,
+        [issueId, lineNo, product_code, slotIdFrom, cartonCode || null, measurementId, deltaUnits, operationType]
+      );
+    }
+
+    // 5) Update Orders_raw
     await exec(conn,
       `UPDATE Orders_raw
           SET Product_Picked = ?,
               Product_Picked_Check = ?,
-              Position = COALESCE(?, Position)
+              Position = ?
         WHERE Order_Number = ? AND Product_Id = ?`,
-      [newPicked, newControl, slotName, orderNumber, ax]
+      [pickedQty, controlQty, slotName, orderNumber, productIdRaw]
     );
 
     await commit(conn);
-    return res.json({ success: true, orderNumber, item: { ax, its }, deltaUnits, operationType, issueId });
+    return res.json({ success: true, orderNumber, product_code, item_id, pickedQty, controlQty, issueId, deltaUnits, operationType });
   } catch (err) {
     try { if (conn) await rollback(conn); } catch {}
     console.error('ERR POST /wms/order/:orderNumber/picked', err);
@@ -3702,29 +3701,6 @@ app.post('/wms/order/:orderNumber/picked', async (req, res) => {
     if (conn) conn.release?.();
   }
 });
-
-//log čtečky
-app.post('/wms/scanlog', (req, res) => {
-  try {
-    const evt = req.body || {};
-    const line = JSON.stringify({
-      ts: new Date().toISOString(),
-      ip: req.headers['x-forwarded-for'] || req.socket.remoteAddress || null,
-      ua: req.headers['user-agent'] || null,
-      ...evt
-    }) + '\n';
-    const logDir = path.join(process.cwd(), 'logs');
-    const logFile = path.join(logDir, 'scanner.log');
-    fs.mkdirSync(logDir, { recursive: true });
-    fs.appendFile(logFile, line, () => {});
-    console.log('[SCAN]', line.trim());
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('[/wms/scanlog] error', e);
-    res.status(500).json({ ok: false, error: e.message || 'log error' });
-  }
-});
-
 
 // === GPT Chat endpoint (JSON i stream) ===
 app.post('/api/chat', async (req, res) => {
@@ -5679,164 +5655,6 @@ app.post('/np/allocate-slots', (req, res) => {
     res.json({ ok: true, updated: result?.affectedRows || 0 });
   });
 });
-// ===== NP Measurements: inline (un)assign endpoints for pallet_slot_id (NULL = free) =====
-// Drop this block anywhere before server.listen(...).
-// Prereqs: Express 'app', MySQL exec helper 'exec', and pool 'poolC5sluzbyint'.
-
-// POST /np/measurements/set-slot
-// Body: { pallet_slot_id: number|null|"null"|""|"0",
-//         measurement_ids?: number[], line_id?: number, carton_index?: number, carton_code?: string }
-app.post('/np/measurements/set-slot', async (req, res) => {
-  // Inline helpers (scoped to this handler)
-  const normalizeSlotId = (raw) => {
-    if (raw === undefined || raw === null) return null;
-    const s = String(raw).trim().toLowerCase();
-    if (s === "" || s === "null" || s === "undefined" || s === "0") return null;
-    const n = Number(s);
-    return (!Number.isFinite(n) || n <= 0) ? null : n;
-  };
-  const collectIds = async () => {
-    let ids = Array.isArray(req.body?.measurement_ids) ? req.body.measurement_ids : [];
-    ids = ids.map((v) => Number(v)).filter((v) => Number.isFinite(v) && v > 0);
-    if (ids.length) return ids;
-
-    const line_id = Number(req.body?.line_id ?? req.query?.line_id);
-    const carton_index = Number(req.body?.carton_index ?? req.query?.carton_index);
-    const carton_code = (req.body?.carton_code ?? req.query?.carton_code)
-      ? String(req.body?.carton_code ?? req.query?.carton_code).trim()
-      : null;
-
-    if (carton_code) {
-      const r = await exec(poolC5sluzbyint, "SELECT id FROM NP_Measurements WHERE carton_code = ? LIMIT 1", [carton_code]);
-      if (r && r.length) return [r[0].id];
-    } else if (Number.isFinite(line_id) && Number.isFinite(carton_index)) {
-      const r = await exec(poolC5sluzbyint,
-        "SELECT id FROM NP_Measurements WHERE line_id = ? AND carton_index = ? LIMIT 1",
-        [line_id, carton_index]
-      );
-      if (r && r.length) return [r[0].id];
-    }
-    return [];
-  };
-
-  try {
-    const slotId = normalizeSlotId(req.body?.pallet_slot_id ?? req.query?.pallet_slot_id);
-    const ids = await collectIds();
-    if (!ids.length) {
-      return res.status(400).json({ success:false, error:"No target measurement(s). Provide measurement_ids OR (line_id & carton_index) OR carton_code." });
-    }
-
-    // If assigning (slotId != null), validate slot and pick its pallet_id
-    let palletId = null;
-    if (slotId != null) {
-      const r = await exec(poolC5sluzbyint, "SELECT id, pallet_id FROM WH_pallet_slots WHERE id = ? LIMIT 1", [slotId]);
-      if (!r || !r.length) return res.status(404).json({ success:false, error:"Target slot not found." });
-      palletId = r[0].pallet_id ?? null;
-    }
-
-    const placeholders = ids.map(() => "?").join(",");
-    const sql = `
-      UPDATE NP_Measurements
-      SET
-        pallet_slot_id = ?,
-        pallet_id      = ?,
-        prep_position  = CASE WHEN ? IS NULL THEN 0 ELSE prep_position END
-      WHERE id IN (${placeholders})
-    `;
-    const params = [slotId, palletId, slotId, ...ids];
-    const result = await exec(poolC5sluzbyint, sql, params);
-
-    return res.json({ success:true, updated: result.affectedRows, pallet_slot_id: slotId, pallet_id: palletId, ids });
-  } catch (e) {
-    console.error("[/np/measurements/set-slot] error:", e);
-    return res.status(500).json({ success:false, error:e.message });
-  }
-});
-
-// POST /np/measurements/unassign
-// Body: { measurement_ids?: number[], line_id?: number, carton_index?: number, carton_code?: string }
-app.post('/np/measurements/unassign', async (req, res) => {
-  // Inline id collector to avoid global helpers
-  const collectIds = async () => {
-    let ids = Array.isArray(req.body?.measurement_ids) ? req.body.measurement_ids : [];
-    ids = ids.map((v) => Number(v)).filter((v) => Number.isFinite(v) && v > 0);
-    if (ids.length) return ids;
-
-    const line_id = Number(req.body?.line_id ?? req.query?.line_id);
-    const carton_index = Number(req.body?.carton_index ?? req.query?.carton_index);
-    const carton_code = (req.body?.carton_code ?? req.query?.carton_code)
-      ? String(req.body?.carton_code ?? req.query?.carton_code).trim()
-      : null;
-
-    if (carton_code) {
-      const r = await exec(poolC5sluzbyint, "SELECT id FROM NP_Measurements WHERE carton_code = ? LIMIT 1", [carton_code]);
-      if (r && r.length) return [r[0].id];
-    } else if (Number.isFinite(line_id) && Number.isFinite(carton_index)) {
-      const r = await exec(poolC5sluzbyint,
-        "SELECT id FROM NP_Measurements WHERE line_id = ? AND carton_index = ? LIMIT 1",
-        [line_id, carton_index]
-      );
-      if (r && r.length) return [r[0].id];
-    }
-    return [];
-  };
-
-  try {
-    const ids = await collectIds();
-    if (!ids.length) {
-      return res.status(400).json({ success:false, error:"No target measurement(s). Provide measurement_ids OR (line_id & carton_index) OR carton_code." });
-    }
-
-    const placeholders = ids.map(() => "?").join(",");
-    const sql = `
-      UPDATE NP_Measurements
-      SET pallet_slot_id = NULL,
-          pallet_id      = NULL,
-          prep_position  = 0
-      WHERE id IN (${placeholders})
-    `;
-    const result = await exec(poolC5sluzbyint, sql, ids);
-    return res.json({ success:true, updated: result.affectedRows, pallet_slot_id: null, pallet_id: null, ids });
-  } catch (e) {
-    console.error("[/np/measurements/unassign] error:", e);
-    return res.status(500).json({ success:false, error:e.message });
-  }
-});
-
-// (Optional) POST /np/slots/:slotId/free  — unassign all measurements in given slot
-// Body: { confirm: true }
-app.post('/np/slots/:slotId/free', async (req, res) => {
-  // Local normalizer
-  const normalizeSlotId = (raw) => {
-    if (raw === undefined || raw === null) return null;
-    const s = String(raw).trim().toLowerCase();
-    if (s === "" || s === "null" || s === "undefined" || s === "0") return null;
-    const n = Number(s);
-    return (!Number.isFinite(n) || n <= 0) ? null : n;
-  };
-
-  try {
-    if (!req.body?.confirm) {
-      return res.status(400).json({ success:false, error:"Confirmation missing. Send { confirm: true } in body." });
-    }
-    const slotId = normalizeSlotId(req.params.slotId);
-    if (slotId == null) return res.status(400).json({ success:false, error:"Invalid slotId." });
-
-    const result = await exec(poolC5sluzbyint, `
-      UPDATE NP_Measurements
-      SET pallet_slot_id = NULL,
-          pallet_id      = NULL,
-          prep_position  = 0
-      WHERE pallet_slot_id = ?
-    `, [slotId]);
-
-    return res.json({ success:true, freed: result.affectedRows, slotId });
-  } catch (e) {
-    console.error("[/np/slots/:slotId/free] error:", e);
-    return res.status(500).json({ success:false, error:e.message });
-  }
-});
-
 
 // vložení údajů o příjmu balíku (OK i NOK)
 app.post('/np/measure', async (req, res) => {
@@ -20197,8 +20015,8 @@ app.get('/upload-tyres', async (req, res) => {
       await truncateTable(); // Vyprázdní tabulku, pokud je parametr truncate nastaven na true
     }
 
-    const xmlFilePath = '\\\\10.60.5.41\\aif\\import\\B2B_stock_products_list_tyres.xml';
-   // const xmlFilePath = "C:\\B2B\\B2B_stock_products_list_tyres.xml";
+   // const xmlFilePath = '\\\\10.60.5.41\\aif\\import\\B2B_stock_products_list_tyres.xml';
+   const xmlFilePath = "C:\\B2B\\B2B_stock_products_list_tyres.xml";
 
 
     const stream = fs.createReadStream(xmlFilePath);
@@ -20340,136 +20158,79 @@ async function updateData() {
   });
 }
 
-
-// Aktualizace B2B dat z products.xml (B2B_AvailableAmount, Web_AvailableAmount, ActionPrice)
-app.post('/refreshTyreData', async (req, res) => {
-  console.log('Received request for /refreshTyreData');
-
-  try {
-    console.log('Načítání XML z FTP (products.xml)...');
-    await fetchXMLFromFTP(ftpDetails, localXMLPath);
-    console.log('XML načteno.');
-    const xmlData = await parseXML(localXMLPath);
-    console.log('XML zpracováno.');
-
-    let xmlItems = xmlData?.Request?.Items?.Item || [];
-    if (!Array.isArray(xmlItems)) {
-      xmlItems = [xmlItems];
-    }
-
-    // PartNo -> { StockAmount, ActionPrice }
-    const xmlItemsData = xmlItems.reduce((acc, item) => {
-      const attrs = item.$ || {};
-      const partNo = attrs.PartNo;
-      if (!partNo) return acc;
-
-      const stockAmount = attrs.StockAmount
-        ? parseInt(attrs.StockAmount, 10) || 0
-        : 0;
-
-      const actionPrice = attrs.Price
-        ? parseFloat(attrs.Price) || 0
-        : 0;
-
-      acc[partNo] = {
-        StockAmount: stockAmount,
-        ActionPrice: actionPrice,
-      };
-
-      return acc;
-    }, {});
-
-    console.log(
-      'Zpracovaná data z products.xml (ukázka):',
-      Object.entries(xmlItemsData).slice(0, 10)
-    );
-
-    let updatedRows = 0;
-
-    for (const [partNo, data] of Object.entries(xmlItemsData)) {
-      const updateQuery = `
-        UPDATE IMPORT_CZS_ProduktyB2B
-        SET
-          B2B_AvailableAmount = ?,
-          Web_AvailableAmount = ?,
-          ActionPrice = ?
-        WHERE PartNo = ?
-      `;
-
-      await new Promise((resolve, reject) => {
-        poolC5pneutyres.query(
-          updateQuery,
-          [data.StockAmount, data.StockAmount, data.ActionPrice, partNo],
-          (err, result) => {
-            if (err) {
-              console.error('Error executing update query for PartNo:', partNo, err);
-              reject(err);
-              return;
-            }
-            updatedRows += result.affectedRows;
-            resolve(result);
-          }
-        );
-      });
-    }
-
-    console.log('Aktualizace dokončena, změněné řádky:', updatedRows);
-
-    res.json({
-      message: 'B2B data byla aktualizována z products.xml',
-      itemsInXml: Object.keys(xmlItemsData).length,
-      rowsUpdated: updatedRows,
-    });
-  } catch (error) {
-    console.error('Error refreshing tyre data:', error);
-    res.status(500).send('Error processing your request');
-  } finally {
-    try {
-      console.log('Odstraňování dočasného souboru products.xml...');
-      fs.unlinkSync(localXMLPath);
-      console.log('Dočasný soubor odstraněn.');
-    } catch (e) {
-      console.warn('Nepodařilo se odstranit dočasný soubor:', e?.message);
-    }
-  }
-});
-
-
-// Získání B2B dat z DB pro konkrétní PartNo (bez práce s FTP)
-app.post('/getTyreData', (req, res) => {
+//získání dat z tabulky B2B
+app.post('/getTyreData', async (req, res) => {
   console.log('Received request for /getTyreData with params:', req.body);
-
-  const items = req.body.items || [];
-  if (!Array.isArray(items) || items.length === 0) {
-    console.log('Nebyla předána žádná položka (items je prázdné pole).');
-    return res.json([]);
-  }
-
+  const items = req.body.items;
   const placeholders = items.map(() => '?').join(',');
 
-  const sqlQuery = `
-    SELECT
+  try {
+    // Načtení a zpracování XML souboru z FTP
+    console.log("Načítání XML z FTP...");
+    await fetchXMLFromFTP(ftpDetails, localXMLPath);
+    console.log("XML načteno.");
+    const xmlData = await parseXML(localXMLPath);
+    console.log("XML zpracováno.");
+       // Zpracování XML dat
+       const xmlItemsData = xmlData.Request.Items.Item.reduce((acc, item) => {
+        const partNo = item.$.PartNo; 
+        const stockAmount = item.$.StockAmount;
+        if (partNo && stockAmount !== undefined) {
+          acc[partNo] = { StockAmount: stockAmount };
+        }
+        return acc;
+      }, {});
+    console.log("Zpracovaná data z FTP:", xmlItemsData); //
+   
+    // Aktualizace databáze podle získaných dat z XML
+    console.log("Aktualizace B2B_AvailableAmount v databázi...");
+    for (const [partNo, data] of Object.entries(xmlItemsData)) {
+      console.log(`Aktualizace PartNo ${partNo} s StockAmount ${data.StockAmount}`);
+      const updateQuery = `UPDATE IMPORT_CZS_ProduktyB2B SET B2B_AvailableAmount = ? WHERE PartNo = ?`;
+      await new Promise((resolve, reject) => {
+        poolC5pneutyres.query(updateQuery, [data.StockAmount, partNo], (err, result) => {
+          if (err) {
+            console.error("Error executing update query for PartNo:", partNo, err);
+            reject(err);
+            return;
+          }
+          console.log(`PartNo ${partNo} aktualizováno, počet změněných řádků: ${result.affectedRows}`);
+          resolve(result);
+        });
+      });
+    }
+    console.log("Všechny položky byly aktualizovány.");
+
+    // SQL dotaz pro získání aktualizovaných dat
+    const sqlQuery = `SELECT
       b.ID,
       b.PartNo,
       b.SPILowestPrice,
       b.SPILowestPriceAmount,
-      b.B2B_AvailableAmount,
-      b.Web_AvailableAmount,
-      b.ActionPrice,
+      b.B2B_AvailableAmount,  
       s.Celkem
-    FROM IMPORT_CZS_ProduktyB2B b
-    LEFT JOIN IMPORT_PNEU_SKLAD s ON b.PartNo = s.Produkt
-    WHERE b.PartNo IN (${placeholders})
-  `;
+      FROM IMPORT_CZS_ProduktyB2B b
+      LEFT JOIN IMPORT_PNEU_SKLAD s ON b.PartNo = s.Produkt
+      WHERE b.PartNo IN (${placeholders});`;
 
-  poolC5pneutyres.query(sqlQuery, items, (err, result) => {
-    if (err) {
-      console.error('Error executing SQL query:', err);
-      return res.status(500).send('Error processing your request');
-    }
-    console.log('Počet vrácených B2B záznamů:', result.length);
-    res.json(result);
-  });
+    poolC5pneutyres.query(sqlQuery, items, (err, result) => {
+      if (err) {
+        console.error("Error executing SQL query:", err);
+        res.status(500).send('Error processing your request');
+        return;
+      }
+      // Zde již data z XML nejsou přidávána, protože byla aktualizována přímo v databázi
+      res.json(result);
+    });
+  } catch (error) {
+    console.error("Error processing the request:", error);
+    res.status(500).send('Error processing your request');
+  } finally {
+    // Odstranění dočasného souboru
+    console.log("Odstraňování dočasného souboru...");
+    fs.unlinkSync(localXMLPath);
+    console.log("Dočasný soubor odstraněn.");
+  }
 });
 
 
@@ -24243,98 +24004,6 @@ app.delete('/delete-data-cenyb2b/:C_Polozky', (req, res) => {
 
 // Spuštění HTTP serveru
 const port = process.env.PORT || 3000;
-
-// ========== GS1 Digital Link for labels (with measured_weight) ==========
-app.get('/np/gs1-link', async (req, res) => {
-  try {
-    const level = String(getParam(req, 'level', 'box') || 'box').toLowerCase(); // 'box' or 'product'
-    const item_code = String(getParam(req, 'item_code', '') || '').trim();
-    const carton_code = String(getParam(req, 'carton_code', '') || '').trim();
-
-    if (!item_code && !carton_code) {
-      return res.status(400).json({ success:false, error:'Missing item_code or carton_code' });
-    }
-
-    // np_number from carton_code prefix before first '-'
-    let np_number = null;
-    const m = carton_code.match(/^([^-\s]+)/);
-    if (m) np_number = m[1];
-
-    // header data (heat, mfg) by np_number
-    let heat_no = null, mfg = null;
-    if (np_number) {
-      try {
-        const rows = await exec(poolC5sluzbyint,
-          "SELECT heat_no, mfg FROM NP_Header WHERE np_number = ? LIMIT 1",
-          [np_number]
-        );
-        if (rows && rows.length) {
-          heat_no = rows[0].heat_no ? String(rows[0].heat_no).trim() : null;
-          mfg     = rows[0].mfg     ? String(rows[0].mfg).trim()     : null; // may be YYMMDD or MM/YYYY
-        }
-      } catch(e) { console.warn('[gs1-link] header lookup', e.message); }
-    }
-
-    // product GTINs and O-ring by item_code
-    let gtin_product = null, gtin_box = null, o_ring = null;
-    if (item_code) {
-      try {
-        const rows = await exec(poolC5sluzbyint,
-          "SELECT `Gtin` AS gtin_product, `EAN Krabice` AS gtin_box, `O_ring` AS o_ring FROM `Tavinox_komplet` WHERE `Kod` = ? LIMIT 1",
-          [item_code]
-        );
-        if (rows && rows.length) {
-          gtin_product = rows[0].gtin_product ? String(rows[0].gtin_product).trim() : null;
-          gtin_box     = rows[0].gtin_box     ? String(rows[0].gtin_box).trim()     : null;
-          o_ring       = rows[0].o_ring       ? String(rows[0].o_ring).trim()       : null;
-        }
-      } catch(e) { console.warn('[gs1-link] Tavinox_komplet lookup', e.message); }
-    }
-
-    // choose GTIN
-    const chosen_gtin = (level === 'product' ? (gtin_product || gtin_box) : (gtin_box || gtin_product));
-    if (!chosen_gtin) {
-      return res.status(404).json({ success:false, error:'GTIN not found for item_code' });
-    }
-
-    // measured_weight by carton_code (latest)
-    let measured_weight = null, measured_at = null;
-    try {
-      if (carton_code) {
-        const r = await exec(poolC5sluzbyint,
-          "SELECT measured_weight, measured_at FROM NP_Measurements WHERE carton_code = ? ORDER BY measured_at DESC LIMIT 1",
-          [carton_code]
-        );
-        if (r && r.length) {
-          measured_weight = r[0].measured_weight;
-          measured_at = r[0].measured_at;
-        }
-      }
-    } catch(e) { console.warn('[gs1-link] measurements lookup', e.message); }
-
-    // build Digital Link
-    const base = (process.env.BASE_URL || 'https://id.tavinox.com').replace(/\/+$/, '');
-    const qs = new URLSearchParams();
-    if (heat_no) qs.set('10', heat_no);      // trimmed so no leading '+' appears
-    if (mfg)     qs.set('11', mfg);
-    if (o_ring)  qs.set('240', o_ring);
-
-    const url = `${base}/01/${encodeURIComponent(chosen_gtin)}${qs.toString() ? ('?' + qs.toString()) : ''}`;
-
-    return res.json({
-      success: true,
-      url,
-      ai: { '01': chosen_gtin, '10': heat_no, '11': mfg, '240': o_ring },
-      level,
-      measured_weight,
-      measured_at
-    });
-  } catch (err) {
-    console.error('[gs1-link] error:', err);
-    return res.status(500).json({ success:false, error: err.message });
-  }
-});
-
 server.listen(port, () => {
     console.log(`Server běží na portu ${port}`);
    

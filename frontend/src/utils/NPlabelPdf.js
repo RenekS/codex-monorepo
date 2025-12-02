@@ -1,6 +1,41 @@
 import { PDFDocument, StandardFonts, rgb, degrees } from "pdf-lib";
 import QRCode from "qrcode";
 import { FLIP } from "../api/NPconfig";
+// --- Helpers for GS1 Digital Link ---
+async function fetchGs1DigitalLink({ item_code, carton_code, level = 'box' }) {
+  try {
+    const API = process.env.REACT_APP_API_URL || '';
+    const params = new URLSearchParams({ item_code: String(item_code||''), carton_code: String(carton_code||''), level });
+    const url = `${API}/np/gs1-link?${params.toString()}`;
+    const resp = await fetch(url);
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    return data && data.url ? String(data.url) : null;
+  } catch (e) {
+    console.warn('fetchGs1DigitalLink failed', e);
+    return null;
+  }
+}
+function parseAIsFromGs1Url(u) {
+  try {
+    const base = (typeof window !== 'undefined' && window.location && window.location.origin) ? window.location.origin : 'http://x';
+    const url = new URL(String(u), base);
+    return {
+      '01': (url.pathname.split('/').includes('01') ? url.pathname.split('/').pop() : null),
+      '10': url.searchParams.get('10') || null,
+      '11': url.searchParams.get('11') || null,
+      '240': url.searchParams.get('240') || null
+    };
+  } catch { return {}; }
+}
+function mfgToMMYY(s) {
+  if (!s) return null;
+  const t = String(s).replace(/\D/g,''); // accept YYMMDD / YYMM00
+  if (t.length < 4) return null;
+  const yy = t.slice(0,2);
+  const mm = t.slice(2,4);
+  return `${mm}/${yy}`;
+}
 
 const MM = 2.83465;
 
@@ -120,7 +155,9 @@ export async function NP_buildLabelPdfBase64({
     prep_positioun: Number(position_to_show ?? 0), // kompatibilita s překlepem
   };
 
-  const qrDataUrl = await QRCode.toDataURL(JSON.stringify(qrPayload), { margin: 2, scale: 8 });
+  const gs1Url = await fetchGs1DigitalLink({ item_code, carton_code });
+  const qrString = gs1Url || JSON.stringify(qrPayload);
+  const qrDataUrl = await QRCode.toDataURL(qrString, { margin: 2, scale: 8 });
   const qrImg = await pdf.embedPng(qrDataUrl);
 
   const topWidth = W - 2 * M_SIDE;

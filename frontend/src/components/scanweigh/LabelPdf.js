@@ -1,6 +1,40 @@
 import { PDFDocument, StandardFonts, rgb, degrees } from "pdf-lib";
 import QRCode from "qrcode";
 import { FLIP, PAPER_MM } from "./constants";
+// --- Helpers for GS1 Digital Link ---
+async function fetchGs1DigitalLink({ item_code, carton_code, level = 'box' }) {
+  try {
+    const API = process.env.REACT_APP_API_URL || '';
+    const params = new URLSearchParams({ item_code: String(item_code||''), carton_code: String(carton_code||''), level });
+    const resp = await fetch(`${API}/np/gs1-link?${params.toString()}`);
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    return data && data.url ? String(data.url) : null;
+  } catch (e) {
+    console.warn('fetchGs1DigitalLink failed', e);
+    return null;
+  }
+}
+function parseAIsFromGs1Url(u) {
+  try {
+    const base = (typeof window !== 'undefined' && window.location && window.location.origin) ? window.location.origin : 'http://x';
+    const url = new URL(String(u), base);
+    return {
+      '01': (url.pathname.split('/').includes('01') ? url.pathname.split('/').pop() : null),
+      '10': url.searchParams.get('10') || null,
+      '11': url.searchParams.get('11') || null,
+      '240': url.searchParams.get('240') || null
+    };
+  } catch { return {}; }
+}
+function mfgToMMYY(s) {
+  if (!s) return null;
+  const t = String(s).replace(/\D/g,''); // accept YYMMDD / YYMM00
+  if (t.length < 4) return null;
+  const yy = t.slice(0,2);
+  const mm = t.slice(2,4);
+  return `${mm}/${yy}`;
+}
 
 // malé util
 const MM = 2.83465;
@@ -95,7 +129,9 @@ export async function buildLabelPdfBase64({
     prep_position: Number(position_to_show ?? 0),
     prep_positioun: Number(position_to_show ?? 0), // kompatibilita s překlepem
   };
-  const qrDataUrl = await QRCode.toDataURL(JSON.stringify(qrPayload), { margin: 0, scale: 8 });
+  const gs1Url = await fetchGs1DigitalLink({ item_code, carton_code });
+  const qrString = gs1Url || JSON.stringify(qrPayload);
+  const qrDataUrl = await QRCode.toDataURL(qrString, { margin: 0, scale: 8 });
   const qrImg = await pdf.embedPng(qrDataUrl);
   const topWidth = W - 2 * M_SIDE;
   const topHeight = THIRD;
@@ -113,49 +149,41 @@ export async function buildLabelPdfBase64({
   const lineH = 6 * MM;
   let y = MID_Y1 - 2 * MM;
 
-  // odvození z carton_code + preferuj explicitní vstupy (batch_text, item_code)
+  // Odvození ze štítkového kódu + vstupy
   const derived = splitFromCartonCode(carton_code);
   const batchVal = batch_text || derived.batch || "";
   const itemVal  = item_code  || derived.item  || "";
   const indexVal = derived.index || "";
 
-  // 1) šarže
-  if (batchVal) {
-    y -= lineH;
-    page.drawText(T(batchVal), {
-      x: padX, y, size: 10, font: fB, color: rgb(0,0,0),
-      maxWidth: W - padX - M_SIDE
-    });
-  }
+  // AIs z QR stringu
+  const ai = parseAIsFromGs1Url(qrString || "");
 
-  // 2) kód produktu
-  if (itemVal) {
+  // pomocná kreslící funkce
+  const drawLine = (label, value) => {
+    if (!value) return;
     y -= lineH;
-    page.drawText(T(itemVal), {
-      x: padX, y, size: 10, font: fB, color: rgb(0,0,0),
-      maxWidth: W - padX - M_SIDE
-    });
-  }
+    const text = T(`${label}: ${value}`);
+    let fs = 10;
+    while (fs > 7) {
+      const w = fB.widthOfTextAtSize(text, fs);
+      if (w <= (W - padX - M_SIDE)) break;
+      fs -= 1;
+    }
+    page.drawText(text, { x: padX, y, size: fs, font: fB, color: rgb(0,0,0), maxWidth: W - padX - M_SIDE });
+  };
 
-  // 3) pořadí balíku (carton_index z konce kódu)
-  if (indexVal) {
-    y -= lineH;
-    page.drawText(T(indexVal), {
-      x: padX, y, size: 10, font: fB, color: rgb(0,0,0),
-      maxWidth: W - padX - M_SIDE
-    });
-  }
+  // 2a) vertikální informace
+  drawLine("Šarže", batchVal);
+  drawLine("Kód", itemVal);
+  drawLine("Č. balíku", indexVal);
+  drawLine("Hmotnost", Number.isFinite(Number(weight)) ? `${Number(weight).toFixed(3)} kg` : "");
 
-  // 4) váha
-  if (Number.isFinite(Number(weight))) {
-    y -= lineH;
-    page.drawText(`${Number(weight).toFixed(3)} kg`, {
-      x: padX, y, size: 12, font: fB, color: rgb(0,0,0),
-      maxWidth: W - padX - M_SIDE
-    });
-  }
-
-  // 5) slot – bez "Slot:", 2× větší a tučně
+  // 2b) Heat/MFG/O‑ring
+  if (ai['10']) drawLine("Heat No.", ai['10']);
+  const mmyy = mfgToMMYY(ai['11']);
+  if (mmyy) drawLine("MFG", mmyy);
+  if (ai['240']) drawLine("O‑ring", ai['240']);
+// 5) slot – bez "Slot:", 2× větší a tučně
   if (slot_name) {
     y -= lineH;
     const value = T(slot_name);

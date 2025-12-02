@@ -3,7 +3,7 @@
 // =============================================================
 import React from 'react';
 
-export default function SlotCartonsTable({ slotCartons, onPrint }) {
+export default function SlotCartonsTable({ slotCartons, onPrint , onDownload = () => {}}) {
   return (
     <section>
       <h3>Krabice v tomto slotu (před/po skenu) – přehled</h3>
@@ -31,6 +31,19 @@ export default function SlotCartonsTable({ slotCartons, onPrint }) {
                 <button onClick={() => onPrint(c)} style={{ padding:'4px 8px', background:'#111', color:'#fff', border:'none', borderRadius:4 }}>
                   Tisk
                 </button>
+                <button
+                  onClick={() => onDownload(c)}
+                  style={{ padding:'4px 8px', marginLeft:6, background:'#fff', color:'#111', border:'1px solid #999', borderRadius:4 }}
+                  title="Stáhnout PDF"
+                  aria-label="Stáhnout PDF"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                  </svg>
+                </button>
+
               </td>
             </tr>
           ))}
