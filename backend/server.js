@@ -31,6 +31,9 @@ const prestaApiKey = process.env.PRESTASHOP_API_KEY;
 const prestaApi_URL = process.env.PRESTASHOP_API_URL;
 const pneutyresApiKey = process.env.PNEUTYRES_API_KEY;
 const pneutyresApi_URL = process.env.PNEUTYRES_API_URL;
+const pneuB2bFtpHost = process.env.PNEUB2B_FTP_HOST || 'ftp.pneub2b.eu';
+const pneuB2bLogin = process.env.PNEUB2B_LOGIN || 'PneuB2B.11503';
+const pneuB2bPassword = process.env.PNEUB2B_PASSWORD || 'pz243ec3';
 const cron = require('node-cron');
 const util = require('util');
 const { v4: uuidv4 } = require('uuid');
@@ -99,9 +102,9 @@ function rollback(conn) {
 
 // FTP nastavení - přejmenováno
 const FTP_B2B_CONFIG = {
-  host: 'ftp.pneub2b.eu',
-  user: 'PneuB2B.11503',
-  password: 'pz243ec3',
+  host: pneuB2bFtpHost,
+  user: pneuB2bLogin,
+  password: pneuB2bPassword,
   secure: false
 };
 
@@ -551,9 +554,9 @@ async function fetchXMLFromFTP(ftpDetails, localXMLPath) {
 
 // Detaily pro připojení k FTP a cestu k souboru
 const ftpDetails = {
-  host: "ftp.pneub2b.eu",
-  user: "PneuB2B.11503",
-  password: "pz243ec3",
+  host: pneuB2bFtpHost,
+  user: pneuB2bLogin,
+  password: pneuB2bPassword,
   remoteFilePath: "./products.xml"
 };
 const localXMLPath = path.join(__dirname, "temp_products.xml");
@@ -4783,9 +4786,9 @@ app.get('/import-b2b-ftp', async (req, res) => {
   // poolC5pneutyres již definováno ve vrchní části server.js
 
   const FTP_B2B_CONFIG = {
-    host: 'ftp.pneub2b.eu',
-    user: 'PneuB2B.11503',
-    password: 'pz243ec3',
+    host: pneuB2bFtpHost,
+    user: pneuB2bLogin,
+    password: pneuB2bPassword,
     secure: false
   };
 
@@ -20146,9 +20149,9 @@ app.get('/EForders/picked', async (req, res) => {
 app.get('/FTP_B2Bproducts', async (req, res) => {
   // Detaily pro připojení k FTP a cestu k souboru
   const ftpDetails = {
-    host: "ftp.pneub2b.eu",
-    user: "PneuB2B.11503",
-    password: "pz243ec3",
+    host: pneuB2bFtpHost,
+    user: pneuB2bLogin,
+    password: pneuB2bPassword,
     secure: false, // Předpokládá se, že připojení není zabezpečené, pokud je, změňte na true
     remoteFilePath: "./products.xml"
   };
