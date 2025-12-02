@@ -1,4 +1,4 @@
-
+﻿
 
 require('dotenv').config();
 
@@ -34,6 +34,7 @@ const pneutyresApi_URL = process.env.PNEUTYRES_API_URL;
 const pneuB2bFtpHost = process.env.PNEUB2B_FTP_HOST || 'ftp.pneub2b.eu';
 const pneuB2bLogin = process.env.PNEUB2B_LOGIN || 'PneuB2B.11503';
 const pneuB2bPassword = process.env.PNEUB2B_PASSWORD || 'pz243ec3';
+const pneuB2bHttpUrl = process.env.PNEUB2B_HTTP_URL || 'http://www.pneub2b.eu/PartnerCommunication.ashx';
 const cron = require('node-cron');
 const util = require('util');
 const { v4: uuidv4 } = require('uuid');
@@ -550,6 +551,66 @@ async function fetchXMLFromFTP(ftpDetails, localXMLPath) {
   client.close();
 }
 
+// Mapování „souborů“ na příkazy PneuB2B ProfiData
+const allowedPneuB2bFiles = new Map([
+  // sortiment dostupných položek
+  ['Product_list.xml', 'products_list'],
+
+  // kompletní sortiment včetně nedostupných položek
+  ['Product_list_full.xml', 'products_list_full'],
+
+  // stav skladu + ceny všech dostupných položek
+  ['Stock_Price_list.xml', 'stock_price_list'],
+
+  // pokud tenhle tvůj interní export existuje,
+  // zatím ho mapujeme na stejné data jako stock_price_list
+  ['B2B_stock_products_list_tyres.xml', 'stock_price_list']
+]);
+
+app.get('/pneub2b/product-list', async (req, res) => {
+  const file = (req.query.file || 'Product_list.xml').toString();
+  const cmd = allowedPneuB2bFiles.get(file);
+
+  if (!cmd) {
+    return res.status(400).json({ error: 'Unsupported file requested.' });
+  }
+
+  // Složka, kam se bude ukládat (můžeš změnit např. na 'import')
+  const importDir = path.join(__dirname, 'import');
+  const targetPath = path.join(importDir, file);
+
+  try {
+    const response = await axios.get(pneuB2bHttpUrl, {
+      auth: { username: pneuB2bLogin, password: pneuB2bPassword },
+      params: { cmd },                  // přesně podle datasheetu
+      responseType: 'arraybuffer',      // stahujeme binárně
+      timeout: 60000,
+      // volitelné: gzip komprese, jak doporučují v dokumentu
+      headers: {
+        'Accept-Encoding': 'gzip'
+      }
+    });
+
+    await fs.promises.mkdir(importDir, { recursive: true });
+
+    // přepíše existující soubor, pokud tam už je
+    await fs.promises.writeFile(targetPath, response.data);
+
+    // vrátíme jen malý JSON – žádné velké XML do response
+    return res.json({
+      status: 'ok',
+      file,
+      path: targetPath,
+      size: response.data.length
+    });
+  } catch (error) {
+    const status = error.response ? error.response.status : 500;
+    console.error('PneuB2B HTTP fetch failed:', error.message);
+    return res
+      .status(status)
+      .json({ error: 'Failed to fetch or save XML' });
+  }
+});
 
 
 // Detaily pro připojení k FTP a cestu k souboru
@@ -20190,8 +20251,154 @@ app.get('/FTP_B2Bproducts', async (req, res) => {
   }
 });
 
+// Helpers for PneuB2B import (tyres)
+function parseNumber(value) {
+  const num = parseFloat(value);
+  return Number.isFinite(num) ? num : null;
+}
 
-//nahrát data z XML B2B
+function parseIntSafe(value) {
+  const num = parseInt(value, 10);
+  return Number.isFinite(num) ? num : null;
+}
+
+async function truncateTable() {
+  return new Promise((resolve, reject) => {
+    poolC5pneutyres.query('TRUNCATE TABLE IMPORT_CZS_ProduktyB2B', err => {
+      if (err) return reject(err);
+      resolve();
+    });
+  });
+}
+
+function extractPriceSection(item, sectionName) {
+  const prefix = sectionName === 'StockPriceInfo' ? 'StockPriceInfo' : sectionName;
+  const pick = (field) => {
+    const key = `${prefix}_${field}`;
+    if (Object.prototype.hasOwnProperty.call(item, key)) return item[key];
+    if (prefix === 'StockPriceInfo' && Object.prototype.hasOwnProperty.call(item, field)) return item[field];
+    return undefined;
+  };
+
+  return {
+    currency: pick('Currency') || null,
+    deliveryTime: pick('DeliveryTime') || null,
+    deliveryTimeTerm: pick('DeliveryTimeTerm') || null,
+    rpFree: pick('RPFree') || null,
+    stockAmount: parseIntSafe(pick('StockAmount')),
+    suppliersCountry: pick('SuppliersCountry') || null,
+    totalPrice: parseNumber(pick('TotalPrice')),
+    totalPriceCZK: parseNumber(pick('TotalPriceCZK')),
+    totalPriceIncDelivery: parseNumber(pick('TotalPriceIncDelivery')),
+    totalPriceIncDeliveryCZK: parseNumber(pick('TotalPriceIncDeliveryCZK')),
+    totalPriceIncDeliveryComputed: parseNumber(pick('TotalPriceIncDeliveryComputed')),
+  };
+}
+
+async function processBatch(batch) {
+  if (!batch.length) return;
+
+  const columns = [
+    'ID', 'PartNo', 'EAN', 'ManufacturerID', 'Manufacturer', 'TyreUsage',
+    'SPICurrency', 'SPIDeliveryTime', 'SPIDeliveryTimeTerm', 'SPIRPFree', 'SPIStockAmount', 'SPISuppliersCountry', 'SPITotalPrice', 'SPITotalPriceCZK', 'SPITotalPriceIncDelivery', 'SPITotalPriceIncDeliveryCZK', 'SPITotalPriceIncDeliveryComputed',
+    'SPI24Currency', 'SPI24DeliveryTime', 'SPI24DeliveryTimeTerm', 'SPI24RPFree', 'SPI24StockAmount', 'SPI24SuppliersCountry', 'SPI24TotalPrice', 'SPI24TotalPriceCZK', 'SPI24TotalPriceIncDelivery', 'SPI24TotalPriceIncDeliveryCZK', 'SPI24TotalPriceIncDeliveryComputed',
+    'SPI48Currency', 'SPI48DeliveryTime', 'SPI48DeliveryTimeTerm', 'SPI48RPFree', 'SPI48StockAmount', 'SPI48SuppliersCountry', 'SPI48TotalPrice', 'SPI48TotalPriceCZK', 'SPI48TotalPriceIncDelivery', 'SPI48TotalPriceIncDeliveryCZK', 'SPI48TotalPriceIncDeliveryComputed',
+    'SPILowestPrice', 'SPILowestPriceAmount', 'B2B_AvailableAmount', 'Web_AvailableAmount', 'ActionPrice', 'ModificationDate'
+  ];
+
+  const rows = batch.map(item => {
+    const spi = extractPriceSection(item, 'StockPriceInfo');
+    const spi24 = extractPriceSection(item, 'StockPriceInfo_24');
+    const spi48 = extractPriceSection(item, 'StockPriceInfo_48');
+
+    const candidates = [spi, spi24, spi48].filter(p => typeof p.totalPrice === 'number');
+    let lowestPrice = 0;
+    let lowestAmount = 0;
+    if (candidates.length) {
+      const lowest = candidates.reduce((acc, curr) => {
+        if (!acc || curr.totalPrice < acc.totalPrice) return curr;
+        return acc;
+      }, null);
+      lowestPrice = lowest.totalPrice || 0;
+      lowestAmount = lowest.stockAmount || 0;
+    }
+
+    const stockAmount = spi.stockAmount ?? 0;
+
+    return [
+      parseIntSafe(item.ID) || 0,
+      item.PartNo || null,
+      item.EAN || null,
+      parseIntSafe(item.ManufacturerID),
+      item.Manufacturer || null,
+      item.TyreUsage || null,
+
+      spi.currency,
+      spi.deliveryTime,
+      spi.deliveryTimeTerm,
+      spi.rpFree,
+      spi.stockAmount,
+      spi.suppliersCountry,
+      spi.totalPrice,
+      spi.totalPriceCZK,
+      spi.totalPriceIncDelivery,
+      spi.totalPriceIncDeliveryCZK,
+      spi.totalPriceIncDeliveryComputed,
+
+      spi24.currency,
+      spi24.deliveryTime,
+      spi24.deliveryTimeTerm,
+      spi24.rpFree,
+      spi24.stockAmount,
+      spi24.suppliersCountry,
+      spi24.totalPrice,
+      spi24.totalPriceCZK,
+      spi24.totalPriceIncDelivery,
+      spi24.totalPriceIncDeliveryCZK,
+      spi24.totalPriceIncDeliveryComputed,
+
+      spi48.currency,
+      spi48.deliveryTime,
+      spi48.deliveryTimeTerm,
+      spi48.rpFree,
+      spi48.stockAmount,
+      spi48.suppliersCountry,
+      spi48.totalPrice,
+      spi48.totalPriceCZK,
+      spi48.totalPriceIncDelivery,
+      spi48.totalPriceIncDeliveryCZK,
+      spi48.totalPriceIncDeliveryComputed,
+
+      lowestPrice,
+      lowestAmount,
+      stockAmount,
+      stockAmount,
+      0,
+      new Date()
+    ];
+  });
+
+  const placeholders = columns.map(() => '?').join(', ');
+  const sql = `
+    INSERT INTO IMPORT_CZS_ProduktyB2B (${columns.join(', ')})
+    VALUES ?
+    ON DUPLICATE KEY UPDATE ${columns.map(col => `${col}=VALUES(${col})`).join(', ')}
+  `;
+
+  return new Promise((resolve, reject) => {
+    poolC5pneutyres.query(sql, [rows], (err) => {
+      if (err) return reject(err);
+      resolve();
+    });
+  });
+}
+
+async function updateData() {
+  // Rezervováno pro navazující logiku po importu (např. další synchronizace).
+  return Promise.resolve();
+}
+
+// nahrát data z XML B2B – včetně STAŽENÍ z PneuB2B do /backend/import
 app.get('/upload-tyres', async (req, res) => {
   try {
     const shouldTruncate = req.query.truncate === 'true';
@@ -20200,21 +20407,45 @@ app.get('/upload-tyres', async (req, res) => {
       await truncateTable(); // Vyprázdní tabulku, pokud je parametr truncate nastaven na true
     }
 
-    const xmlFilePath = '\\\\10.60.5.41\\aif\\import\\B2B_stock_products_list_tyres.xml';
-   // const xmlFilePath = "C:\\B2B\\B2B_stock_products_list_tyres.xml";
+    // 1) Nejprve stáhnout aktuální XML z PneuB2B
+    const importDir = path.join(__dirname, 'import');
+    const xmlFilePath = path.join(importDir, 'B2B_stock_products_list_tyres.xml');
 
+    try {
+      const response = await axios.get(pneuB2bHttpUrl, {
+        auth: { username: pneuB2bLogin, password: pneuB2bPassword },
+        params: { cmd: 'stock_price_list' }, // podle dokumentace ProfiData
+        responseType: 'arraybuffer',
+        timeout: 60000,
+        headers: {
+          'Accept-Encoding': 'gzip'
+        }
+      });
 
+      await fs.promises.mkdir(importDir, { recursive: true });
+      // writeFile přepíše existující soubor – přesně jak chceš
+      await fs.promises.writeFile(xmlFilePath, response.data);
+      console.log('PneuB2B stock_price_list stažen a uložen do:', xmlFilePath);
+    } catch (downloadErr) {
+      console.error('Failed to download XML from PneuB2B:', downloadErr.message);
+      return res.status(500).send('Failed to download XML from PneuB2B');
+    }
+
+    // 2) Teď otevřeme LOKÁLNÍ soubor z /backend/import a naparsujeme ho
     const stream = fs.createReadStream(xmlFilePath);
     const saxStream = sax.createStream(true);
 
     let currentTyre = {};
     let currentTagName = null;
+    let currentPriceSection = null;
     let tyres = [];
     const batchSize = 100;
 
     saxStream.on("opentag", node => {
       if (node.name === "Tyre") {
         currentTyre = {};
+      } else if (["StockPriceInfo", "StockPriceInfo_24", "StockPriceInfo_48"].includes(node.name)) {
+        currentPriceSection = node.name;
       } else {
         currentTagName = node.name;
       }
@@ -20225,24 +20456,40 @@ app.get('/upload-tyres', async (req, res) => {
         tyres.push(currentTyre);
         currentTyre = {};
         if (tyres.length >= batchSize) {
-          processBatch(tyres.splice(0, batchSize)); // Zpracuje a vymaže dávku
+          // nečekáme na resolve, ale běží to paralelně – tak, jak jsi to měl
+          processBatch(tyres.splice(0, batchSize)).catch(err => {
+            console.error('Failed to process batch:', err);
+          });
         }
+      }
+      if (["StockPriceInfo", "StockPriceInfo_24", "StockPriceInfo_48"].includes(name)) {
+        currentPriceSection = null;
       }
       currentTagName = null;
     });
 
     saxStream.on("text", text => {
-      if (currentTagName && currentTagName !== "Tyres") {
-        currentTyre[currentTagName] = text;
+      const value = text.trim();
+      if (!value || !currentTagName || currentTagName === "Tyres") return;
+
+      if (currentPriceSection) {
+        currentTyre[`${currentPriceSection}_${currentTagName}`] = value;
+      } else {
+        currentTyre[currentTagName] = value;
       }
     });
 
     saxStream.on("end", async () => {
-      if (tyres.length > 0) {
-        await processBatch(tyres);
+      try {
+        if (tyres.length > 0) {
+          await processBatch(tyres);
+        }
+        await updateData();
+        res.send('Successfully downloaded and uploaded tyres data to database');
+      } catch (e) {
+        console.error('Failed to process remaining tyres or update data:', e);
+        res.status(500).send('Failed to process tyres data');
       }
-      await updateData();
-      res.send('Successfully uploaded tyres data to database');
     });
 
     saxStream.on("error", error => {
@@ -20256,92 +20503,6 @@ app.get('/upload-tyres', async (req, res) => {
     res.status(500).send('An error occurred during the process');
   }
 });
-
-const truncateTable = async () => {
-  const truncateTableSql = `TRUNCATE TABLE IMPORT_CZS_ProduktyB2B`;
-  return new Promise((resolve, reject) => {
-    poolC5pneutyres.query(truncateTableSql, (error) => {
-      if (error) {
-        console.error('Error truncating table:', error);
-        reject(error);
-      } else {
-        console.log('Table truncated successfully');
-        resolve();
-      }
-    });
-  });
-};
-
-const formatNumber = (value) => {
-  if (!value) return value;
-  let num = parseFloat(value);
-  if (Number.isInteger(num)) {
-    return num.toString();
-  }
-  return num.toString().replace(/(\.0+|0+)$/, ''); // Odstraní koncové nuly
-};
-
-async function processBatch(batch) {
-  // Formátujeme hodnoty ve sloupcích Width a Diameter
-  batch = batch.map(tyre => {
-    return {
-      ...tyre,
-      Width: formatNumber(tyre.Width),
-      Diameter: formatNumber(tyre.Diameter)
-    };
-  });
-
-  const columnsToInclude = Object.keys(batch[0]).filter(column => column !== 'Tyres');
-  const placeholders = batch.map(() => '(' + columnsToInclude.map(() => '?').join(', ') + ')').join(', ');
-  const flatValues = batch.flatMap(tyre => columnsToInclude.map(key => tyre[key] !== undefined ? tyre[key] : null));
-  const columns = columnsToInclude.map(column => `\`${column}\``).join(', ');
-  const updateClause = columnsToInclude
-      .filter(column => column !== 'ID') // Předpokládáme, že ID je sloupec, který se má vyloučit z aktualizace
-      .map(column => `\`${column}\` = VALUES(\`${column}\`)`).join(', ');
-
-  const insertSql = `INSERT INTO IMPORT_CZS_ProduktyB2B (${columns}) VALUES ${placeholders} ON DUPLICATE KEY UPDATE ${updateClause}`;
-
-  return new Promise((resolve, reject) => {
-    poolC5pneutyres.query(insertSql, flatValues, (error, results) => {
-      if (error) {
-        console.error('Error inserting batch:', error);
-        reject(error);
-      } else {
-        resolve(results);
-      }
-    });
-  });
-}
-
-async function updateData() {
-  const updateSql = `
-    UPDATE IMPORT_CZS_ProduktyB2B
-    SET SPILowestPrice = CASE
-        WHEN SPITotalPriceCZK IS NOT NULL AND (SPI24TotalPriceCZK IS NULL OR SPITotalPriceCZK <= SPI24TotalPriceCZK) AND (SPI48TotalPriceCZK IS NULL OR SPITotalPriceCZK <= SPI48TotalPriceCZK) THEN SPITotalPriceCZK
-        WHEN SPI24TotalPriceCZK IS NOT NULL AND (SPITotalPriceCZK IS NULL OR SPI24TotalPriceCZK < SPITotalPriceCZK) AND (SPI48TotalPriceCZK IS NULL OR SPI24TotalPriceCZK <= SPI48TotalPriceCZK) THEN SPI24TotalPriceCZK
-        WHEN SPI48TotalPriceCZK IS NOT NULL AND (SPITotalPriceCZK IS NULL OR SPI48TotalPriceCZK < SPITotalPriceCZK) AND (SPI24TotalPriceCZK IS NULL OR SPI48TotalPriceCZK < SPI24TotalPriceCZK) THEN SPI48TotalPriceCZK
-        ELSE NULL
-    END,
-    SPILowestPriceAmount = CASE
-        WHEN SPILowestPrice = SPITotalPriceCZK THEN SPIStockAmount
-        WHEN SPILowestPrice = SPI24TotalPriceCZK THEN SPI24StockAmount
-        WHEN SPILowestPrice = SPI48TotalPriceCZK THEN SPI48StockAmount
-        ELSE NULL
-    END;
-  `;
-
-  return new Promise((resolve, reject) => {
-    poolC5pneutyres.query(updateSql, (error) => {
-      if (error) {
-        console.error('Error updating data:', error);
-        reject(error);
-      } else {
-        console.log('Data updated successfully');
-        resolve();
-      }
-    });
-  });
-}
 
 
 // Aktualizace B2B dat z products.xml (B2B_AvailableAmount, Web_AvailableAmount, ActionPrice)

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-function Login({ setIsAuthenticated }) {
+function Login({ setIsAuthenticated, setUserRoutes }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -41,6 +41,9 @@ function Login({ setIsAuthenticated }) {
 
         // aktualizovat stav v App.js
         setIsAuthenticated(true);
+        if (setUserRoutes) {
+          setUserRoutes(routes);
+        }
 
         // přesměrovat na výchozí stránku
         navigate('/servicesheet', { replace: true });

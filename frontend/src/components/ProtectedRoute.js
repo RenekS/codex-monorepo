@@ -6,6 +6,11 @@ const ProtectedRoute = ({ isAuthenticated, allowedRoles = [], allowedPaths = [],
   const userRole = localStorage.getItem('userRole'); // nebo z kontextu
   const currentPath = window.location.pathname;
 
+  // povol i dynamické cesty typu /objednavka-pt-detail/123 pokud má user povolenou základní route
+  const isPathAllowed =
+    !allowedPaths.length ||
+    allowedPaths.some((allowed) => currentPath === allowed || currentPath.startsWith(`${allowed}/`));
+
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
   }
@@ -14,7 +19,7 @@ const ProtectedRoute = ({ isAuthenticated, allowedRoles = [], allowedPaths = [],
     return <Navigate to="/unauthorized" replace />;
   }
 
-  if (allowedPaths.length && !allowedPaths.includes(currentPath)) {
+  if (!isPathAllowed) {
     return <Navigate to="/unauthorized" replace />;
   }
 
